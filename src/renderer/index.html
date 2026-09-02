@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cultural Mosaic</title>
+    <!--
+      worker-src 'self' blob:  keeps the ?worker&inline fallback available.
+      style-src 'unsafe-inline' is required because Vite injects <style> tags in dev;
+      React's style={{}} prop uses CSSOM and is NOT affected by CSP.
+      connect-src ws: is HMR. Everything else is locked.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' ws: http://localhost:*; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

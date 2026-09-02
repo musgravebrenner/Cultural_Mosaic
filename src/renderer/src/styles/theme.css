@@ -1,0 +1,46 @@
+:root {
+  /* The three primary categories of Chao & Moon's taxonomy. */
+  --cat-demographic: #e5484d;
+  --cat-geographic: #46a758;
+  --cat-associative: #3e63dd;
+
+  /* Chrome. Never pure white or black -- that is the fastest way to make
+     generative output look like a screenshot of a debug view. */
+  --ink-bg: #101014;
+  --ink-panel: #17171c;
+  --ink-border: #2a2a33;
+  --ink-text: #e8e8ea;
+  --ink-text-dim: #8b8b96;
+
+  --paper-bg: #f4f1ea;
+  --paper-panel: #ffffff;
+  --paper-border: #ddd8cc;
+  --paper-text: #1a1a1c;
+  --paper-text-dim: #6b6b70;
+
+  --panel-width: 380px;
+  --radius: 6px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ink-bg);
+  color: var(--ink-text);
+  font:
+    13px/1.5 'Segoe UI Variable Text',
+    'Segoe UI',
+    system-ui,
+    sans-serif;
+  overflow: hidden;
+}

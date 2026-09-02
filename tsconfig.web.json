@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "jsx": "react-jsx",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.web.tsbuildinfo",
+    "baseUrl": ".",
+    "paths": { "@/*": ["src/renderer/src/*"] }
+  },
+  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx", "src/shared/**/*.ts", "src/preload/index.d.ts"],
+  "exclude": ["src/renderer/src/solver/kernel/**/*", "src/renderer/src/solver/solver.worker.ts"]
+}
