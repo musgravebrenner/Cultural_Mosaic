@@ -1,5 +1,6 @@
 import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'node:path'
+import { writeFile } from 'node:fs/promises'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { registerIpc } from './ipc'
 
@@ -35,6 +36,38 @@ function createWindow(): void {
       if (process.env['MOSAIC_DIAG'] && message.startsWith('MOSAIC_DIAG ')) {
         setTimeout(() => app.exit(message.includes('"pass":true') ? 0 : 1), 50)
       }
+    })
+  }
+
+  // MOSAIC_SHOT=<path>: load the sample profile, wait for a few animation frames, and
+  // write a PNG of the window. A development affordance for verifying the render
+  // without a human at the keyboard; not referenced by any app code.
+  if (process.env['MOSAIC_SHOT']) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      const win = mainWindow
+      if (!win) return
+      setTimeout(() => {
+        void win.webContents
+          .executeJavaScript('window.__mosaic.store.getState().loadSample(); true')
+          .then(
+            () =>
+              new Promise((r) => {
+                setTimeout(r, 900)
+              }),
+          )
+          .then(() => win.webContents.capturePage())
+          .then((img) => writeFile(process.env['MOSAIC_SHOT']!, img.toPNG()))
+          .then(() => {
+            process.stdout.write(`SHOT_OK ${process.env['MOSAIC_SHOT']}
+`)
+            app.exit(0)
+          })
+          .catch((err: Error) => {
+            process.stdout.write(`SHOT_FAIL ${err.message}
+`)
+            app.exit(1)
+          })
+      }, 1200)
     })
   }
 

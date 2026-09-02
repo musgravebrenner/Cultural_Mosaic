@@ -215,7 +215,13 @@ describe('radiusFraction', () => {
    * formula stated alongside it. The FORMULA is authoritative; these are its values.
    * Recorded here so the discrepancy is not later mistaken for a bug.
    */
-  const cfg = DEFAULT_LAYOUT
+  /**
+   * Pinned explicitly rather than taken from DEFAULT_LAYOUT: this test covers the
+   * FORMULA, so retuning the app's rim radius for a rendering margin must not
+   * invalidate the mathematics golden. The integration fixture below is the test that
+   * legitimately tracks DEFAULT_LAYOUT.
+   */
+  const cfg = { ...DEFAULT_LAYOUT, rimRadius: 0.92, minRadius: 0.1 }
   const golden: [number, number][] = [
     [1.00, 1.000000],
     [0.85, 0.824413],
@@ -559,17 +565,17 @@ describe('golden placement fixture', () => {
       .map((t) => `${t.pairId} theta=${t.thetaDeg.toFixed(2)} r=${t.radius.toFixed(4)}`)
       .sort()
     expect(table).toEqual([
-      'A-AVO-02 theta=307.51 r=0.1869',
-      'A-AVO-04 theta=290.00 r=0.1526',
-      'A-FAM-03 theta=38.87 r=0.3574',
-      'A-PRO-05 theta=311.26 r=0.4353',
-      'A-REL-01 theta=306.19 r=0.4622',
-      'D-AGE-01 theta=61.64 r=0.8651',
-      'D-GEN-01 theta=55.10 r=0.8113',
-      'D-RAC-02 theta=1.98 r=0.3610',
-      'G-CLI-03 theta=179.22 r=0.6604',
-      'G-REG-01 theta=160.34 r=0.6509',
-      'G-URB-05 theta=231.79 r=0.2937',
+      'A-AVO-02 theta=307.36 r=0.1803',
+      'A-AVO-04 theta=290.16 r=0.1483',
+      'A-FAM-03 theta=38.89 r=0.3375',
+      'A-PRO-05 theta=311.25 r=0.4103',
+      'A-REL-01 theta=306.18 r=0.4350',
+      'D-AGE-01 theta=61.64 r=0.8092',
+      'D-GEN-01 theta=55.11 r=0.7592',
+      'D-RAC-02 theta=1.96 r=0.3403',
+      'G-CLI-03 theta=179.21 r=0.6189',
+      'G-REG-01 theta=160.34 r=0.6084',
+      'G-URB-05 theta=231.88 r=0.2779',
     ])
   })
 

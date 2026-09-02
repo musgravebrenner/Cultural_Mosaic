@@ -17,7 +17,9 @@ import { LEAN_NOTCHES, STRENGTH_VALUES } from '../domain/types'
 
 export const DEFAULT_LAYOUT: LayoutConfig = Object.freeze({
   gridSize: 96,
-  rimRadius: 0.92,
+  // Leaves a margin inside the normalized [-1,1] box for the rim ring, the sector
+  // arcs and the category labels, all of which are drawn outside the disc.
+  rimRadius: 0.86,
   minRadius: 0.10,
   radialExponent: 1.35,
   purityFloor: 0.55,
