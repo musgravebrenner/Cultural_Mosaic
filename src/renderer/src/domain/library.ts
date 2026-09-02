@@ -53,8 +53,27 @@ import type { WordPair, Antagonism } from './types'
  * badly wrong. This omission is a scope decision, and is worth naming as one.
  *
  * `mix` is the hue at slider centre, L1-normalized as (Demographic, Geographic,
- * Associative). `skew` is given only where the two poles genuinely differ in category
- * character. `immutability` is the authored default; users can override it per pair.
+ * Associative). `immutability` is the authored default; users can override it per pair.
+ *
+ * ---------------------------------------------------------------------------
+ * SKEW SIGN CONVENTION -- read this before editing any `skew`.
+ * ---------------------------------------------------------------------------
+ *
+ * Effective hue is  L1norm(max(0, mix + lean * skew)),  with lean = -1 at pole A and
+ * +1 at pole B. So:
+ *
+ *     poleA hue = mix - skew        poleB hue = mix + skew
+ *
+ * `skew` is therefore THE SHIFT TOWARD POLE B, not the shift at pole A.
+ *
+ * Consequence, and the thing to check when authoring: if pole A is the more
+ * inherited/given reading, then `skew[0]` (the Demographic component) must be
+ * NEGATIVE. Getting this backwards is not a cosmetic error -- it places "Family is who
+ * I was born to" in the Associative sector and "Family is who I chose" in the
+ * Demographic sector, inverting the geometry that the whole layout is meant to express,
+ * while still producing plausible-looking art. Every skew below has been audited
+ * against its pole wording, and `polar.test.ts` asserts the intended direction pair by
+ * pair so a future edit cannot silently flip one.
  */
 
 // prettier-ignore
@@ -74,7 +93,7 @@ export const LIBRARY: readonly WordPair[] = Object.freeze([
     note: 'Birth cohort as a formative fact -- the sociohistorical perspective.' },
   { id: 'D-AGE-02', source: 'library', category: 'demographic', facet: 'age',
     poleA: "Elders' judgment guides me", poleB: 'Each generation decides anew',
-    mix: [0.70, 0, 0.30], skew: [0.20, 0, -0.20], immutability: 0.55 },
+    mix: [0.70, 0, 0.30], skew: [-0.20, 0, 0.20], immutability: 0.55 },
   { id: 'D-AGE-03', source: 'library', category: 'demographic', facet: 'age',
     poleA: 'Still becoming', poleB: 'Settled into who I am',
     mix: [0.85, 0, 0.15], immutability: 0.30 },
@@ -83,7 +102,7 @@ export const LIBRARY: readonly WordPair[] = Object.freeze([
     mix: [0.80, 0, 0.20], immutability: 0.40 },
   { id: 'D-AGE-05', source: 'library', category: 'demographic', facet: 'age',
     poleA: 'Age earns standing', poleB: 'Merit earns standing',
-    mix: [0.60, 0, 0.40], skew: [0.25, 0, -0.25], immutability: 0.50 },
+    mix: [0.60, 0, 0.40], skew: [-0.25, 0, 0.25], immutability: 0.50 },
   { id: 'D-AGE-06', source: 'library', category: 'demographic', facet: 'age',
     poleA: 'Comfortable with how I was raised', poleB: 'Deliberately raised myself differently',
     mix: [0.75, 0, 0.25], immutability: 0.60 },
@@ -95,10 +114,10 @@ export const LIBRARY: readonly WordPair[] = Object.freeze([
     note: 'Identity centrality, not heritage content.' },
   { id: 'D-ETH-02', source: 'library', category: 'demographic', facet: 'ethnicity',
     poleA: 'My heritage language is my voice', poleB: 'One shared common language is enough',
-    mix: [0.70, 0, 0.30], skew: [0.15, 0, -0.15], immutability: 0.55 },
+    mix: [0.70, 0, 0.30], skew: [-0.15, 0, 0.15], immutability: 0.55 },
   { id: 'D-ETH-03', source: 'library', category: 'demographic', facet: 'ethnicity',
     poleA: 'Keep ancestral customs distinct', poleB: 'Blend customs into one shared life',
-    mix: [0.60, 0, 0.40], skew: [0.25, 0, -0.25], immutability: 0.45,
+    mix: [0.60, 0, 0.40], skew: [-0.25, 0, 0.25], immutability: 0.45,
     note: "Roccas & Brewer's dominant-vs-hybrid axis, stated as a first-person preference." },
   { id: 'D-ETH-04', source: 'library', category: 'demographic', facet: 'ethnicity',
     poleA: 'Named for my lineage', poleB: 'Named for myself',
@@ -123,7 +142,7 @@ export const LIBRARY: readonly WordPair[] = Object.freeze([
       + 'to everyone. Without that copy, cut it.' },
   { id: 'D-GEN-03', source: 'library', category: 'demographic', facet: 'gender',
     poleA: 'Roles in my home follow tradition', poleB: 'Roles in my home are negotiated',
-    mix: [0.50, 0, 0.50], skew: [0.20, 0, -0.20], immutability: 0.35 },
+    mix: [0.50, 0, 0.50], skew: [-0.20, 0, 0.20], immutability: 0.35 },
   { id: 'D-GEN-04', source: 'library', category: 'demographic', facet: 'gender',
     poleA: 'Directness is respect', poleB: 'Indirectness is respect',
     mix: [0.60, 0, 0.40], immutability: 0.50 },
@@ -140,7 +159,7 @@ export const LIBRARY: readonly WordPair[] = Object.freeze([
     mix: [1.00, 0, 0], immutability: 0.80 },
   { id: 'D-RAC-02', source: 'library', category: 'demographic', facet: 'race',
     poleA: 'I am my relationships (interdependent)', poleB: 'I am my own unit (independent)',
-    mix: [0.50, 0, 0.50], skew: [-0.20, 0, 0.20], immutability: 0.55,
+    mix: [0.50, 0, 0.50], skew: [0.20, 0, -0.20], immutability: 0.55,
     note: "The paper's individualism/collectivism axis. Sits at exactly (0.5, 0, 0.5), so it "
       + 'lands at theta = 0 deg -- the Demographic/Associative boundary. Perfect magenta, '
       + '"Affinity Groups". This is the canonical blended pair; use it as the worked example.' },
@@ -230,7 +249,7 @@ export const LIBRARY: readonly WordPair[] = Object.freeze([
   // --- Regional / country (7) --------------------------------------------
   { id: 'G-REG-01', source: 'library', category: 'geographic', facet: 'regional-country',
     poleA: "Where I was born is where I'm from", poleB: "Where I chose is where I'm from",
-    mix: [0.30, 0.70, 0], skew: [0.10, -0.20, 0.10], immutability: 1.00,
+    mix: [0.30, 0.70, 0], skew: [0, -0.15, 0.15], immutability: 1.00,
     note: 'The birthplace anchor, and a genuine bipolar spectrum (rootedness vs '
       + 'self-determination of place) rather than a data-entry field.' },
   { id: 'G-REG-02', source: 'library', category: 'geographic', facet: 'regional-country',
@@ -269,7 +288,7 @@ export const LIBRARY: readonly WordPair[] = Object.freeze([
     mix: [0.30, 0, 0.70], immutability: 0.55 },
   { id: 'A-FAM-03', source: 'library', category: 'associative', facet: 'family',
     poleA: 'Family is who I was born to', poleB: 'Family is who I chose',
-    mix: [0.45, 0, 0.55], skew: [0.30, 0, -0.30], immutability: 0.50,
+    mix: [0.45, 0, 0.55], skew: [-0.30, 0, 0.30], immutability: 0.50,
     note: 'The largest skew in the library. At pole A the hue is (0.75, 0, 0.25) -- near-red, '
       + 'inherited kin; at pole B (0.15, 0, 0.85) -- near-blue, chosen kin. Two people who '
       + 'answer only this pair, oppositely, get nodes ~100 deg apart with different hues. '
@@ -295,7 +314,7 @@ export const LIBRARY: readonly WordPair[] = Object.freeze([
     mix: [0, 0.15, 0.85], immutability: 0.45 },
   { id: 'A-REL-03', source: 'library', category: 'associative', facet: 'religion',
     poleA: 'I inherited my tradition', poleB: 'I found my own tradition',
-    mix: [0.40, 0, 0.60], skew: [0.30, 0, -0.30], immutability: 0.55 },
+    mix: [0.40, 0, 0.60], skew: [-0.30, 0, 0.30], immutability: 0.55 },
   { id: 'A-REL-04', source: 'library', category: 'associative', facet: 'religion',
     poleA: 'Ritual and calendar shape my year', poleB: 'Work and season shape my year',
     mix: [0.10, 0.25, 0.65], immutability: 0.45 },
@@ -353,13 +372,13 @@ export const LIBRARY: readonly WordPair[] = Object.freeze([
     mix: [0.30, 0, 0.70], immutability: 0.40 },
   { id: 'A-POL-03', source: 'library', category: 'associative', facet: 'politics',
     poleA: 'Decide close to home', poleB: 'Decide at the largest scale',
-    mix: [0, 0.40, 0.60], skew: [0, 0.20, -0.20], immutability: 0.40 },
+    mix: [0, 0.40, 0.60], skew: [0, -0.20, 0.20], immutability: 0.40 },
   { id: 'A-POL-04', source: 'library', category: 'associative', facet: 'politics',
     poleA: 'Speak up publicly', poleB: 'Work quietly',
     mix: [0.10, 0, 0.90], immutability: 0.30 },
   { id: 'A-POL-05', source: 'library', category: 'associative', facet: 'politics',
     poleA: 'Tradition is evidence', poleB: 'Evidence overrides tradition',
-    mix: [0.30, 0, 0.70], skew: [0.20, 0, -0.20], immutability: 0.45 },
+    mix: [0.30, 0, 0.70], skew: [-0.20, 0, 0.20], immutability: 0.45 },
 
   // --- Avocations (6) ----------------------------------------------------
   // Deliberately the lowest immutability band. These are the load points.
