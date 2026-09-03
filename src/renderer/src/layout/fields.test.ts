@@ -296,8 +296,11 @@ describe('volume fraction', () => {
     expect(deriveVolumeFraction(allCore)).toBeGreaterThan(deriveVolumeFraction(allMinor))
     for (const t of [allCore, allMinor]) {
       expect(deriveVolumeFraction(t)).toBeGreaterThanOrEqual(0.2)
-      expect(deriveVolumeFraction(t)).toBeLessThanOrEqual(0.55)
+      expect(deriveVolumeFraction(t)).toBeLessThanOrEqual(0.42)
     }
+    // The whole derived range must sit where structure is actually visible: above ~0.45
+    // the optimum is consolidated blobs, because nothing has to be spanned.
+    expect(deriveVolumeFraction(allCore)).toBeLessThan(0.43)
   })
 
   it('hits the requested volume fraction to within a fraction of a percent', () => {

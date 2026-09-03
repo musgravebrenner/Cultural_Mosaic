@@ -11,6 +11,8 @@ import type { PlacedTile } from '../domain/types'
 import { FieldRenderer, snapToCells } from '../render/FieldRenderer'
 import { OverlayRenderer } from '../render/OverlayRenderer'
 import { getSolverSession } from '../solver/SolverSession'
+import { FREE, SOLID_PASSIVE, VOID_PASSIVE } from '../solver/protocol'
+import { deriveVolumeFraction } from '../layout/fields'
 import { THEMES } from '../render/tone'
 
 /**
@@ -71,6 +73,73 @@ export default function MosaicCanvas(): JSX.Element {
     let sizeDirty = true
     let phase = 0
     let raf = 0
+    /** True once a run has produced frames, so the seed is not redrawn over them. */
+    let showingSolverOutput = false
+
+    /**
+     * Build the element-state array the kernel needs: void outside the disc, solid
+     * where a pin or load patch sits, free elsewhere.
+     */
+    const buildProblem = (): void => {
+      if (!derived || !grid) return
+      const s = useStore.getState()
+      const { fields, bc } = derived
+      const state = new Uint8Array(grid.count)
+      for (let i = 0; i < grid.count; i++) state[i] = grid.mask[i] ? FREE : VOID_PASSIVE
+      for (const e of bc.solidPassive) state[e] = SOLID_PASSIVE
+
+      const rho0 = new Float32Array(grid.count)
+      const wField = new Float32Array(grid.count)
+      for (let i = 0; i < grid.count; i++) {
+        rho0[i] = fields.rho0[i]!
+        wField[i] = fields.w[i]!
+      }
+
+      const vf =
+        s.solver.volumeFraction === 'derived'
+          ? deriveVolumeFraction(derived.tiles)
+          : s.solver.volumeFraction
+
+      session.init(
+        {
+          nelx: grid.n,
+          nely: grid.n,
+          state,
+          rho0,
+          w: wField,
+          fixedDofs: bc.fixedDofs,
+          loadDofs: bc.loadDofs,
+          loadValues: bc.loadValues,
+        },
+        {
+          mode: s.solver.mode,
+          volumeFraction: vf,
+          penalty: s.solver.penalty,
+          filterRadius: s.solver.filterRadius,
+          moveLimit: s.solver.moveLimit,
+        },
+      )
+    }
+
+    const onRun = (ev: Event): void => {
+      const n = (ev as CustomEvent<{ iterations: number }>).detail?.iterations ?? 120
+      if (seedDirty) {
+        rebuild()
+        seedDirty = false
+      }
+      buildProblem()
+      showingSolverOutput = true
+      session.step(n)
+    }
+
+    const onReset = (): void => {
+      showingSolverOutput = false
+      session.clearFrame()
+      seedDirty = true
+    }
+
+    window.addEventListener('mosaic:run', onRun)
+    window.addEventListener('mosaic:reset', onReset)
 
     const rebuild = (): void => {
       const s = useStore.getState()
@@ -134,6 +203,12 @@ export default function MosaicCanvas(): JSX.Element {
         rebuild()
         seedDirty = false
         overlayDirty = true
+        // Editing the profile invalidates any run in progress.
+        if (showingSolverOutput) {
+          showingSolverOutput = false
+          session.abort()
+          useStore.getState().setRunning(false)
+        }
         if (derived) {
           renderer.draw(
             {
@@ -205,6 +280,8 @@ export default function MosaicCanvas(): JSX.Element {
       cancelAnimationFrame(raf)
       unsubAnswers()
       ro.disconnect()
+      window.removeEventListener('mosaic:run', onRun)
+      window.removeEventListener('mosaic:reset', onReset)
       renderer.dispose()
     }
     // Empty deps: this effect runs once for the app's lifetime.

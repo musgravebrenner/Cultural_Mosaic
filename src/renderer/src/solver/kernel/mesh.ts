@@ -15,12 +15,10 @@
  * kernel. Do not introduce an h factor.
  */
 
-/** Outside the design domain. Never assembled, so K's support is exactly the domain. */
-export const VOID_PASSIVE = 0
-/** A design variable. */
-export const FREE = 1
-/** Held at rho = 1 and excluded from the design variables. Load and pin patches. */
-export const SOLID_PASSIVE = 2
+// The element-state encoding lives in the protocol, because the renderer builds the
+// array and the kernel consumes it -- both sides must agree.
+export { VOID_PASSIVE, FREE, SOLID_PASSIVE } from '../protocol'
+import { VOID_PASSIVE, FREE } from '../protocol'
 
 export interface Mesh {
   readonly nelx: number

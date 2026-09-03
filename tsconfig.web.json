@@ -10,5 +10,5 @@
     "paths": { "@/*": ["src/renderer/src/*"] }
   },
   "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx", "src/shared/**/*.ts", "src/preload/index.d.ts"],
-  "exclude": ["src/renderer/src/solver/kernel/**/*", "src/renderer/src/solver/solver.worker.ts"]
+  "exclude": ["src/renderer/src/solver/solver.worker.ts"]
 }

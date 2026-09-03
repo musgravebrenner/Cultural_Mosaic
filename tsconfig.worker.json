@@ -4,6 +4,9 @@
     "composite": true,
     "lib": ["ES2022", "WebWorker"],
     "types": [],
+    // Relaxed for the FEA inner loops, where every typed-array read would otherwise
+    // type as number | undefined. Not an escape hatch: the kernel is ALSO compiled by
+    // tsconfig.web.json, which keeps the flag on, so it has to satisfy both.
     "noUncheckedIndexedAccess": false,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.worker.tsbuildinfo"
   },

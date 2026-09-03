@@ -53,6 +53,8 @@ export interface CgWorkspace {
   z: Float64Array
   p: Float64Array
   q: Float64Array
+  /** Effective right-hand side. See the note in pcg() on why f is never mutated. */
+  b: Float64Array
 }
 
 export function createCgWorkspace(ndof: number): CgWorkspace {
@@ -61,6 +63,7 @@ export function createCgWorkspace(ndof: number): CgWorkspace {
     z: new Float64Array(ndof),
     p: new Float64Array(ndof),
     q: new Float64Array(ndof),
+    b: new Float64Array(ndof),
   }
 }
 
@@ -77,21 +80,32 @@ export function pcg(
 ): CgResult {
   const { rowPtr, colIdx } = pattern
   const n = f.length
-  const { r, z, p, q } = ws
+  const { r, z, p, q, b } = ws
 
-  // Enforce rather than assume: a caller that forgot to zero a loaded-and-pinned DOF
-  // would otherwise get a silently inconsistent initial residual.
+  /**
+   * Build the effective right-hand side into a WORKSPACE vector. `f` itself is never
+   * written to.
+   *
+   * This matters far more than it looks. The constrained set changes between
+   * iterations as the design evolves, so zeroing `f` in place permanently destroys any
+   * load whose DOF is momentarily constrained -- it never comes back, even once the
+   * material around it is restored. Observed effect: the structure shed its loads one
+   * by one and collapsed from a volume fraction of 0.25 to the density floor within
+   * four iterations, reporting a compliance of exactly zero and looking, from the
+   * outside, like a converged run.
+   */
+  b.set(f)
   for (let k = 0; k < fixedList.length; k++) {
     const c = fixedList[k]!
-    f[c] = 0
+    b[c] = 0
     u[c] = 0
   }
 
   spmv(values, rowPtr, colIdx, u, q)
-  for (let i = 0; i < n; i++) r[i] = f[i]! - q[i]!
+  for (let i = 0; i < n; i++) r[i] = b[i]! - q[i]!
   for (let k = 0; k < fixedList.length; k++) r[fixedList[k]!] = 0 // <-- required
 
-  const bnorm = norm2(f)
+  const bnorm = norm2(b)
   if (bnorm === 0) {
     u.fill(0)
     return { iters: 0, residual: 0, converged: true }

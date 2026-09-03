@@ -67,6 +67,8 @@ export interface IterationMetrics {
   cgConverged: boolean
   islands: number
   unsupportedLoads: number
+  /** Every load was stranded, so the design was held rather than updated. */
+  noSignal: boolean
   converged: boolean
 }
 
@@ -235,8 +237,27 @@ export class Optimizer {
     for (let i = 0; i < this.mesh.ndof; i++) fu += this.f[i]! * this.u[i]!
     this.identityError = Math.abs(compliance - fu) / Math.max(Math.abs(fu), 1e-30)
 
+    /**
+     * NO-SIGNAL GUARD. If every load ended up stranded -- on a floating island, or in a
+     * region the connectivity pass constrained -- then u is zero, every element energy
+     * is zero, and every sensitivity is zero.
+     *
+     * Running the update anyway is destructive rather than merely useless: with all
+     * sensitivities at zero, Be is zero for every element, so every candidate density is
+     * zero, the volume bisection has no root to find, and the entire design drops by the
+     * move limit each iteration. Observed: a structure fell from a volume fraction of
+     * 0.25 to the density floor in four iterations while reporting compliance exactly
+     * zero -- which reads from the outside like a converged run.
+     *
+     * Holding the design instead keeps the state recoverable, and the metrics tell the
+     * UI exactly what happened.
+     */
+    const noSignal = !(compliance > 0)
+
     let converged = false
-    if (this.mode === 'beso' && this.beso) {
+    if (noSignal) {
+      this.oc.changeLinf = 0
+    } else if (this.mode === 'beso' && this.beso) {
       const r = besoStep(
         this.beso,
         this.mesh,
@@ -283,6 +304,7 @@ export class Optimizer {
       cgConverged: cg.converged,
       islands: this.conn.islands,
       unsupportedLoads: this.conn.unsupportedLoads,
+      noSignal,
       converged,
     }
   }

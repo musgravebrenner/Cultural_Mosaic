@@ -47,12 +47,20 @@ function createWindow(): void {
       const win = mainWindow
       if (!win) return
       setTimeout(() => {
+        const vf = process.env['MOSAIC_VF']
+          ? "window.__mosaic.store.getState().setSolver({volumeFraction:" + process.env['MOSAIC_VF'] + "});"
+          : ''
+        const script = process.env['MOSAIC_RUN']
+          ? "window.__mosaic.store.getState().loadSample();" + vf
+            + "setTimeout(function(){window.dispatchEvent(new CustomEvent('mosaic:run',"
+            + "{detail:{iterations:" + process.env['MOSAIC_RUN'] + "}}));},600); true"
+          : 'window.__mosaic.store.getState().loadSample(); true'
         void win.webContents
-          .executeJavaScript('window.__mosaic.store.getState().loadSample(); true')
+          .executeJavaScript(script)
           .then(
             () =>
               new Promise((r) => {
-                setTimeout(r, 900)
+                setTimeout(r, process.env['MOSAIC_RUN'] ? 14000 : 900)
               }),
           )
           .then(() => win.webContents.capturePage())

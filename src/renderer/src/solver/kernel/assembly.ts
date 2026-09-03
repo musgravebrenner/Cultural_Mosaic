@@ -46,7 +46,10 @@ export function buildPattern(mesh: Mesh): Pattern {
   const counts = new Int32Array(ndof)
   for (let a = 0; a < nd; a++) {
     const b = designList[a]! * 8
-    for (let i = 0; i < 8; i++) counts[edof[b + i]!] += 8
+    for (let i = 0; i < 8; i++) {
+      const r = edof[b + i]!
+      counts[r] = counts[r]! + 8
+    }
   }
 
   const start = new Int32Array(ndof + 1)

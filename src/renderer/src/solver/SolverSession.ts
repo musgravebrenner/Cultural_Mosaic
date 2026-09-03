@@ -1,5 +1,11 @@
 import SolverWorker from './solver.worker?worker'
-import type { SolverRequest, SolverResponse, FrameMetrics } from './protocol'
+import type {
+  SolverRequest,
+  SolverResponse,
+  FrameMetrics,
+  SolverProblem,
+  SolverConfig,
+} from './protocol'
 
 /**
  * THE boundary between the app and the solver.
@@ -80,8 +86,28 @@ export class SolverSession {
     return () => this.lifecycleListeners.delete(fn)
   }
 
+  init(problem: SolverProblem, config: SolverConfig): void {
+    // Transfer the problem arrays: they are rebuilt per run, so the renderer has no
+    // further use for them and a copy would be pure waste.
+    this.latestFrame = null
+    this.spent = null
+    this.fieldDirty = false
+    this.send({ type: 'init', problem, config })
+  }
+
   step(n: number): void {
     this.send({ type: 'step', n })
+  }
+
+  harden(): void {
+    this.send({ type: 'harden' })
+  }
+
+  /** Drop the last frame so the canvas falls back to drawing the seed field. */
+  clearFrame(): void {
+    this.latestFrame = null
+    this.spent = null
+    this.fieldDirty = false
   }
 
   abort(): void {

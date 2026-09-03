@@ -263,16 +263,25 @@ export function buildFields(
  * total strength it reads as: strong decisive identities give a dense, load-bearing
  * mosaic; tentative answers give a thin, filigree one.
  *
- * The clamp is a feasibility requirement, not decoration. Below ~0.18 a disc carrying
- * 10-20 point loads cannot form a connected truss at the default filter radius, and the
- * optimizer returns disconnected fragments; above ~0.60 nothing erodes.
+ * The clamp is partly a feasibility requirement and partly an aesthetic one. Below
+ * about 0.18 a disc carrying a dozen point loads cannot form a connected truss at the
+ * default filter radius and the optimizer returns fragments. The UPPER bound was
+ * lowered from 0.55 to 0.42 after looking at real output: a strongly-answered profile
+ * derived 0.46, at which the optimum is a set of consolidated blobs rather than a
+ * structure -- there is simply enough material that nothing has to be spanned. The same
+ * profile at 0.24 produces clearly legible load paths and negative space. The range now
+ * keeps the whole span in the regime where structure is visible, while preserving the
+ * mapping that strong, decisive identities give a denser mosaic than tentative ones.
+ *
+ * Users who want the dense extreme can still set it manually; the Advanced panel shows
+ * the derived value alongside the override.
  */
 export function deriveVolumeFraction(tiles: readonly PlacedTile[]): number {
   if (tiles.length === 0) return 0.2
   let sum = 0
   for (const t of tiles) sum += t.salience
   const s = sum / tiles.length
-  return Math.min(0.55, Math.max(0.2, 0.22 + 0.3 * s))
+  return Math.min(0.42, Math.max(0.2, 0.2 + 0.22 * s))
 }
 
 /**

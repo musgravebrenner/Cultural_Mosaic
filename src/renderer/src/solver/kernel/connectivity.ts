@@ -172,12 +172,30 @@ export function updateConnectivity(
    * nonzero component of u and the initial residual is inconsistent with the system
    * actually being solved.
    */
+  /**
+   * A DOF that carries a LOAD is never constrained, even when it is stranded on an
+   * island.
+   *
+   * Constraining it makes the no-signal state absorbing. Once every load is silenced,
+   * u is zero, every sensitivity is zero, and nothing can ever change again -- the run
+   * freezes permanently with the loads still stranded. Observed: an island formed at
+   * iteration two and the design never moved for the remaining twenty-eight.
+   *
+   * Leaving it free is also the physically honest choice. Under SIMP the island is
+   * still tied to the structure through Emin material, so K stays positive definite;
+   * the island simply deflects enormously, the compliance is huge, and the sensitivity
+   * field points hard at connecting it back. That is exactly the signal the optimizer
+   * needs, and exactly what the artwork should express -- an identity with no path to
+   * the rim demands one be built.
+   */
+  const carriesLoad = new Uint8Array(ndof)
+  for (let k = 0; k < loadDofs.length; k++) carriesLoad[loadDofs[k]!] = 1
+
   const newly: number[] = []
   for (let i = 0; i < ndof; i++) {
     const wasFixed = fixedMask[i] === 1
-    // Constrained only if pinned, or stranded on an island with no anchored solid
-    // element touching it.
-    const nowFixed = pinnedMask[i] === 1 || (inIsland[i] === 1 && supported[i] === 0)
+    const stranded = inIsland[i] === 1 && supported[i] === 0
+    const nowFixed = pinnedMask[i] === 1 || (stranded && carriesLoad[i] === 0)
     if (nowFixed && !wasFixed) newly.push(i)
     fixedMask[i] = nowFixed ? 1 : 0
   }
@@ -201,11 +219,15 @@ export function updateConnectivity(
   for (const s of size.values()) if (s > ISLAND_MIN_ELEMS) islands++
   conn.islands = islands
 
-  let dropped = 0
+  // Report loads stranded on an island. They are still SOLVED for (see above), so this
+  // is diagnostic rather than a statement that the load was dropped -- it tells the UI
+  // that an identity currently has no structural path to the rim.
+  let stranded = 0
   for (let k = 0; k < loadDofs.length; k++) {
-    if (fixedMask[loadDofs[k]!]) dropped++
+    const d = loadDofs[k]!
+    if (inIsland[d] === 1 && supported[d] === 0) stranded++
   }
-  conn.unsupportedLoads = dropped
+  conn.unsupportedLoads = stranded
 }
 
 export const CONNECTIVITY_CONSTANTS = Object.freeze({

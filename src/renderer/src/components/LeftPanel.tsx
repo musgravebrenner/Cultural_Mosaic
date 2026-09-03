@@ -9,6 +9,7 @@ import {
 } from '../domain/taxonomy'
 import type { CategoryId, FacetId } from '../domain/taxonomy'
 import { LEAN_NOTCHES, STRENGTH_LABELS } from '../domain/types'
+import RunControls from './RunControls'
 import type { LeanIndex, StrengthLevel, TileAnswer, WordPair } from '../domain/types'
 
 const CAT_CSS: Record<CategoryId, string> = {
@@ -45,6 +46,7 @@ export default function LeftPanel(): JSX.Element {
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
         {tab === 'library' ? <LibraryBrowser /> : <ProfileList />}
       </div>
+      <RunControls />
     </div>
   )
 }
