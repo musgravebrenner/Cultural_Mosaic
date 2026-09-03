@@ -38,6 +38,7 @@ the render was checked during development:
 | `MOSAIC_SHOT=<path>` | Load the sample profile, wait, and write a PNG of the window |
 | `MOSAIC_RUN=<n>` | Also press Run for `n` iterations before the screenshot |
 | `MOSAIC_VF=<f>` | Override the volume fraction first |
+| `MOSAIC_SCREEN=splash\|quiz\|flow` | Drive to a screen; `flow` answers 40 questions, opens the graph and runs |
 
 ```bash
 unset ELECTRON_RUN_AS_NODE && MOSAIC_RUN=140 MOSAIC_SHOT=/tmp/shot.png npx electron-vite preview
@@ -46,6 +47,34 @@ unset ELECTRON_RUN_AS_NODE && MOSAIC_RUN=140 MOSAIC_SHOT=/tmp/shot.png npx elect
 **Test the BUILT output, not just `npm run dev`.** The dev server runs over
 `http://localhost`, where Chromium's worker and CSP rules are looser than under the
 packaged `file://` origin. A worker path that works in dev can still fail when packaged.
+
+## Screens
+
+**Splash** — Start or continue the questions, jump straight to the graph, open a saved
+profile, or load the sample. If a draft exists it says how far through you are before you
+commit to resuming.
+
+**Quiz** — All 79 pairs, one at a time, in Table 1 order so the taxonomy is legible from
+the questions themselves. Keyboard throughout: `1`–`7` sets the lean, `Q W E R` the
+strength, `S` skips, arrows move, `Enter` advances, `Esc` leaves for the graph. Progress
+is a segmented bar coloured by category, so you can see the three blocks going by.
+
+The three identity-*centrality* questions (how much heritage, gender and race organize
+your self-concept) are deliberately held to the **end**. They are the model's strongest
+rim anchors, and they are the non-essentialist way to get those anchors — but asking a
+stranger to rate how much their race matters as question three reads as a test rather
+than a portrait. After sixty questions about climate, craft and family they arrive in a
+context that has established what the instrument is doing. Each is explicitly skippable.
+Placement depends only on the answers, never on the order they were given in.
+
+**Studio** — The two-panel editor: library and answer cards on the left, the mosaic on
+the right, Run controls in the footer.
+
+Answers autosave to a working draft in `localStorage` after a 400 ms debounce, so Resume
+survives closing the app. That draft is a per-machine convenience for one in-progress
+quiz; `Save` writes the real document, and that is the only thing treated as durable. The
+draft is validated through the same parser as a file on disk, because a draft written by
+an older build is exactly what the migration chain exists for.
 
 ## How it works
 
@@ -99,12 +128,12 @@ src/shared/      the four-channel IPC contract
 src/main/        app lifecycle, hardened window, the only fs in the app
 src/preload/     contextBridge: four named functions, nothing generic
 src/renderer/src/
-  domain/        taxonomy, types, the 79-pair library, validation, migration
+  domain/        taxonomy, types, the 79-pair library, quiz order, validation, migration
   layout/        polar placement, seed fields, boundary conditions
   solver/        worker boundary + kernel/ (the FEA and optimization)
   render/        tone mapping, field and overlay renderers, PNG export
   components/    the two-panel UI
-  state/         zustand document store
+  state/         zustand document store + autosaved draft
 ```
 
 `src/renderer/src/domain/library.ts` is the only place the model's sociological content

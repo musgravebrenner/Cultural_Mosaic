@@ -3,6 +3,7 @@ import { StrictMode } from 'react'
 import App from './App'
 import './styles/theme.css'
 import { useStore } from './state/store'
+import { QUIZ_ORDER } from './domain/quiz'
 
 /**
  * Inspection hook. Exposes the document store on `window.__mosaic` so the app can be
@@ -16,7 +17,7 @@ import { useStore } from './state/store'
  * could not already run arbitrary script in the renderer. It exposes no filesystem or
  * IPC capability beyond what the page already has.
  */
-;(window as unknown as { __mosaic?: unknown }).__mosaic = { store: useStore }
+;(window as unknown as { __mosaic?: unknown }).__mosaic = { store: useStore, quizOrder: QUIZ_ORDER }
 
 const el = document.getElementById('root')
 if (!el) throw new Error('#root missing from index.html')

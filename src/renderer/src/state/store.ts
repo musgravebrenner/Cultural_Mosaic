@@ -13,6 +13,7 @@ import type {
 import { LEAN_CENTER } from '../domain/types'
 import { LIBRARY, LIBRARY_BY_ID } from '../domain/library'
 import { DEFAULT_LAYOUT } from '../layout/polar'
+import { QUIZ_LENGTH, firstUnansweredIndex } from '../domain/quiz'
 
 /**
  * Zustand, and the deciding feature is the one people rarely cite: its vanilla API
@@ -54,7 +55,19 @@ export const DEFAULT_RENDER: RenderConfig = Object.freeze({
 
 export type PanelTab = 'library' | 'profile'
 
+/**
+ * Which screen the app is on. The quiz is the on-ramp: 79 library rows is a wall to
+ * open onto, whereas one question at a time builds the same profile without the user
+ * having to know the taxonomy first.
+ */
+export type AppMode = 'splash' | 'quiz' | 'studio'
+
 interface State {
+  // --- navigation ---
+  mode: AppMode
+  /** Position in QUIZ_ORDER. */
+  quizIndex: number
+
   // --- document ---
   title: string
   answers: TileAnswer[]
@@ -94,6 +107,14 @@ interface State {
   toProfile: (appVersion: string) => MosaicProfile
   loadProfile: (p: MosaicProfile) => void
   loadSample: () => void
+
+  // --- navigation / quiz ---
+  setMode: (m: AppMode) => void
+  startQuiz: (fresh: boolean) => void
+  setQuizIndex: (i: number) => void
+  /** Record an answer for the pair at the current quiz position. */
+  answerQuiz: (pairId: string, leanIndex: LeanIndex, strength: StrengthLevel) => void
+  skipQuiz: (pairId: string) => void
 }
 
 /**
@@ -134,6 +155,8 @@ function newId(prefix: string): string {
 }
 
 export const useStore = create<State>((set, get) => ({
+  mode: 'splash',
+  quizIndex: 0,
   title: 'Untitled mosaic',
   answers: [],
   customPairs: [],
@@ -271,8 +294,53 @@ export const useStore = create<State>((set, get) => ({
         dirty: true,
         tab: 'profile' as PanelTab,
         hoveredAnswerId: null,
+        mode: 'studio' as AppMode,
       }
     }),
+
+  setMode: (mode) => set({ mode }),
+
+  startQuiz: (fresh) =>
+    set((s) => {
+      if (fresh) {
+        return { mode: 'quiz' as AppMode, quizIndex: 0, answers: [], dirty: true }
+      }
+      const answered = new Set(s.answers.map((a) => a.pairId))
+      const next = firstUnansweredIndex(answered)
+      // Every question visited: land on the last one rather than out of bounds, so
+      // Resume on a finished quiz is a review rather than a dead end.
+      return { mode: 'quiz' as AppMode, quizIndex: next === -1 ? QUIZ_LENGTH - 1 : next }
+    }),
+
+  setQuizIndex: (i) =>
+    set({ quizIndex: Math.max(0, Math.min(QUIZ_LENGTH - 1, Math.round(i))) }),
+
+  answerQuiz: (pairId, leanIndex, strength) =>
+    set((s) => {
+      const existing = s.answers.find((a) => a.pairId === pairId)
+      const answers = existing
+        ? s.answers.map((a) => (a.pairId === pairId ? { ...a, leanIndex, strength } : a))
+        : [
+            ...s.answers,
+            {
+              answerId: newId('ans'),
+              pairId,
+              leanIndex,
+              strength,
+              addedAt: Date.now(),
+            },
+          ]
+      return { answers, dirty: true }
+    }),
+
+  /**
+   * Skipping REMOVES any prior answer rather than storing a sentinel. An unanswered
+   * pair is simply absent from `answers`, which is distinct from Dormant -- Dormant is
+   * a kept state meaning "this is not part of me", and it stays in the document so it
+   * can be toggled back.
+   */
+  skipQuiz: (pairId) =>
+    set((s) => ({ answers: s.answers.filter((a) => a.pairId !== pairId), dirty: true })),
 
   loadProfile: (p) =>
     set({
@@ -285,6 +353,7 @@ export const useStore = create<State>((set, get) => ({
       dirty: false,
       hoveredAnswerId: null,
       tab: 'profile',
+      mode: 'studio',
     }),
 }))
 

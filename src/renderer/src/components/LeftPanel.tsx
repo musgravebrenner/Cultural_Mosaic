@@ -316,20 +316,39 @@ function MixBar({ mix }: { mix: readonly [number, number, number] }): JSX.Elemen
   )
 }
 
-/** How fixed the trait is: filled = given at birth, hollow = chosen daily. */
+/**
+ * How fixed the trait is: filled = given at birth, hollow = chosen daily.
+ *
+ * Uses an inner disc scaled by the value rather than color-mix() against transparent.
+ * Mixing toward transparent in sRGB produces a translucent colour whose apparent
+ * lightness depends on whatever is behind it, so on the dark theme every pip came out
+ * looking the same -- the one thing the pip exists to distinguish.
+ */
 function ImmutabilityPip({ v }: { v: number }): JSX.Element {
+  const inner = Math.round(2 + v * 7)
   return (
     <span
       title={`Fixedness ${v.toFixed(2)} — how much could you change this by a decision this year?`}
       style={{
-        width: 9,
-        height: 9,
+        width: 11,
+        height: 11,
         flex: '0 0 auto',
-        borderRadius: 9,
-        border: '1px solid var(--ink-text-dim)',
-        background: `color-mix(in srgb, var(--ink-text) ${Math.round(v * 100)}%, transparent)`,
+        borderRadius: 11,
+        border: '1px solid var(--ink-border)',
+        display: 'grid',
+        placeItems: 'center',
       }}
-    />
+    >
+      <span
+        style={{
+          width: inner,
+          height: inner,
+          borderRadius: inner,
+          background: 'var(--ink-text)',
+          opacity: 0.3 + 0.7 * v,
+        }}
+      />
+    </span>
   )
 }
 

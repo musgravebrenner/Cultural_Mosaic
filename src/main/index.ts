@@ -50,6 +50,43 @@ function createWindow(): void {
         const vf = process.env['MOSAIC_VF']
           ? "window.__mosaic.store.getState().setSolver({volumeFraction:" + process.env['MOSAIC_VF'] + "});"
           : ''
+        // MOSAIC_SCREEN drives the app to a named screen instead of loading the
+        // sample: 'splash' leaves it where it starts, 'quiz' begins a fresh run.
+        const screen = process.env['MOSAIC_SCREEN']
+        if (screen) {
+          // 'flow' exercises the whole path: start the quiz, answer a spread of
+          // questions the way a user would, then go to the graph and run.
+          const flow =
+            'var s=window.__mosaic.store.getState();s.startQuiz(true);'
+            + 'var o=window.__mosaic.quizOrder;'
+            + 'for(var i=0;i<40;i++){s.answerQuiz(o[i],(i*3)%7,(i%3)+1);}'
+            + "window.__mosaic.store.getState().setMode('studio');"
+            + 'setTimeout(function(){window.dispatchEvent(new CustomEvent("mosaic:run",'
+            + '{detail:{iterations:140}}));},700); true'
+          const nav =
+            screen === 'quiz'
+              ? 'window.__mosaic.store.getState().startQuiz(true); true'
+              : screen === 'flow'
+                ? flow
+                : "window.__mosaic.store.getState().setMode('" + screen + "'); true"
+          void win.webContents
+            .executeJavaScript(nav)
+            .then(() => new Promise((r) => setTimeout(r, screen === 'flow' ? 12000 : 700)))
+            .then(() => win.webContents.capturePage())
+            .then((img) => writeFile(process.env['MOSAIC_SHOT']!, img.toPNG()))
+            .then(() => {
+              process.stdout.write(`SHOT_OK ${process.env['MOSAIC_SHOT']}
+`)
+              app.exit(0)
+            })
+            .catch((err: Error) => {
+              process.stdout.write(`SHOT_FAIL ${err.message}
+`)
+              app.exit(1)
+            })
+          return
+        }
+
         const script = process.env['MOSAIC_RUN']
           ? "window.__mosaic.store.getState().loadSample();" + vf
             + "setTimeout(function(){window.dispatchEvent(new CustomEvent('mosaic:run',"
