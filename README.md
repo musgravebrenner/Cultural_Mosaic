@@ -17,7 +17,7 @@ npm install
 npm run dev        # dev server with HMR
 npm run build      # build all three targets
 npm start          # run the built output (this is the one that matters -- see below)
-npm test           # 229 tests
+npm test           # 257 tests
 npm run typecheck  # tsc -b across four projects
 npm run package    # Windows NSIS installer into dist/
 ```
@@ -38,7 +38,7 @@ the render was checked during development:
 | `MOSAIC_SHOT=<path>` | Load the sample profile, wait, and write a PNG of the window |
 | `MOSAIC_RUN=<n>` | Also press Run for `n` iterations before the screenshot |
 | `MOSAIC_VF=<f>` | Override the volume fraction first |
-| `MOSAIC_SCREEN=splash\|quiz\|flow` | Drive to a screen; `flow` answers 40 questions, opens the graph and runs |
+| `MOSAIC_SCREEN=…` | `splash`, `quiz`, `seed` (answer 12 and exit, to test draft persistence across a restart), or `flow` (answer 40, open the graph, run) |
 
 ```bash
 unset ELECTRON_RUN_AS_NODE && MOSAIC_RUN=140 MOSAIC_SHOT=/tmp/shot.png npx electron-vite preview
@@ -70,11 +70,18 @@ Placement depends only on the answers, never on the order they were given in.
 **Studio** — The two-panel editor: library and answer cards on the left, the mosaic on
 the right, Run controls in the footer.
 
-Answers autosave to a working draft in `localStorage` after a 400 ms debounce, so Resume
-survives closing the app. That draft is a per-machine convenience for one in-progress
-quiz; `Save` writes the real document, and that is the only thing treated as durable. The
-draft is validated through the same parser as a file on disk, because a draft written by
-an older build is exactly what the migration chain exists for.
+Answers autosave after a 400 ms debounce to `draft.mosaic.json` in the app's userData
+directory, so Resume survives closing the app. That draft is a per-machine convenience
+for one in-progress quiz; `Save` writes the real document, and that is the only thing
+treated as durable. The draft is validated through the same parser as a file on disk,
+because one written by an older build is exactly what the migration chain exists for.
+
+**Not `localStorage`**, and that is worth recording. The renderer loads from `file://`,
+which Chromium treats as an opaque origin for storage: writes and reads both succeed
+within a session, so it looks like it works — but nothing survives a restart, which is
+the only thing a draft is for. A key written in one launch was verifiably absent from the
+next. The draft therefore goes through two IPC channels (`draft:get` / `draft:set`) on a
+path main chooses, which adds no path surface.
 
 ## How it works
 
@@ -126,7 +133,7 @@ being imposed.
 docs/            the two source PDFs, plus the design documents
 src/shared/      the four-channel IPC contract
 src/main/        app lifecycle, hardened window, the only fs in the app
-src/preload/     contextBridge: four named functions, nothing generic
+src/preload/     contextBridge: six named functions, nothing generic
 src/renderer/src/
   domain/        taxonomy, types, the 79-pair library, quiz order, validation, migration
   layout/        polar placement, seed fields, boundary conditions

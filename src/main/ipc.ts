@@ -1,7 +1,7 @@
 import { ipcMain, app } from 'electron'
 import type { BrowserWindow } from 'electron'
 import { IPC } from '../shared/ipc-contract'
-import { saveProfile, openProfile, exportPng } from './dialogs'
+import { saveProfile, openProfile, exportPng, readDraft, writeDraft } from './dialogs'
 
 /** Registers exactly four handlers. Nothing else is reachable from the renderer. */
 export function registerIpc(getWindow: () => BrowserWindow | null): void {
@@ -24,4 +24,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   ipcMain.handle(IPC.getAppVersion, () => app.getVersion())
+
+  // No window needed: these touch only the app's own userData directory.
+  ipcMain.handle(IPC.draftGet, () => readDraft())
+  ipcMain.handle(IPC.draftSet, (_e, json: string | null) => writeDraft(json))
 }

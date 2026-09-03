@@ -5,13 +5,22 @@ import Toolbar from './components/Toolbar'
 import Splash from './components/Splash'
 import Quiz from './components/Quiz'
 import { useStore } from './state/store'
-import { startDraftAutosave } from './state/draft'
+import { flushDraft, startDraftAutosave } from './state/draft'
 import { QUIZ_LENGTH } from './domain/quiz'
 
 export default function App(): JSX.Element {
   const mode = useStore((s) => s.mode)
 
-  useEffect(() => startDraftAutosave(), [])
+  useEffect(() => {
+    const stop = startDraftAutosave()
+    // Without this, up to one debounce window of answers is lost when the window closes.
+    const onLeave = (): void => flushDraft()
+    window.addEventListener('beforeunload', onLeave)
+    return () => {
+      window.removeEventListener('beforeunload', onLeave)
+      stop()
+    }
+  }, [])
 
   /**
    * The studio is kept MOUNTED behind the splash and the quiz rather than unmounted.

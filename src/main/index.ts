@@ -56,6 +56,12 @@ function createWindow(): void {
         if (screen) {
           // 'flow' exercises the whole path: start the quiz, answer a spread of
           // questions the way a user would, then go to the graph and run.
+          // 'seed' answers a handful of questions and exits, so a SECOND launch can
+          // prove the draft survived a real process restart.
+          const seedOnly =
+            'var s=window.__mosaic.store.getState();s.startQuiz(true);'
+            + 'var o=window.__mosaic.quizOrder;'
+            + 'for(var i=0;i<12;i++){s.answerQuiz(o[i],4,2);}true'
           const flow =
             'var s=window.__mosaic.store.getState();s.startQuiz(true);'
             + 'var o=window.__mosaic.quizOrder;'
@@ -64,14 +70,16 @@ function createWindow(): void {
             + 'setTimeout(function(){window.dispatchEvent(new CustomEvent("mosaic:run",'
             + '{detail:{iterations:140}}));},700); true'
           const nav =
-            screen === 'quiz'
+            screen === 'seed'
+              ? seedOnly
+              : screen === 'quiz'
               ? 'window.__mosaic.store.getState().startQuiz(true); true'
               : screen === 'flow'
                 ? flow
                 : "window.__mosaic.store.getState().setMode('" + screen + "'); true"
           void win.webContents
             .executeJavaScript(nav)
-            .then(() => new Promise((r) => setTimeout(r, screen === 'flow' ? 12000 : 700)))
+            .then(() => new Promise((r) => setTimeout(r, screen === 'flow' ? 12000 : screen === 'seed' ? 1500 : 700)))
             .then(() => win.webContents.capturePage())
             .then((img) => writeFile(process.env['MOSAIC_SHOT']!, img.toPNG()))
             .then(() => {

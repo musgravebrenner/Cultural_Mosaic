@@ -4,19 +4,23 @@ import { parseProfile } from '../domain/validate'
 /**
  * An autosaved working draft, so Resume survives closing the app.
  *
- * Deliberately localStorage rather than a file. This is a per-machine convenience for
- * one in-progress quiz, not the user's artwork -- Save writes the real document, and
- * that is the only thing the app treats as durable. Every access is wrapped, because
- * localStorage genuinely throws in some contexts (cleared site data, a browser set to
- * block storage) and a failed autosave must never take the app down with it.
+ * Backed by a FILE in the app's userData directory, not localStorage. That is a
+ * correction, not a preference: the renderer is loaded from `file://`, which Chromium
+ * treats as an opaque origin for storage. Writes and reads both succeed within a single
+ * session, so localStorage looks like it works — but nothing survives a restart, which
+ * is the only thing a draft is for. Verified by probe: a key written in one launch was
+ * absent from the next.
  *
- * The draft is validated through the same parseProfile as a file on disk. A draft
- * written by an older build is exactly the case the migration chain exists for, and
- * trusting it just because the app wrote it is how you end up with a corrupt store that
- * cannot be cleared from inside the UI.
+ * The draft is a per-machine convenience for one in-progress quiz, not the user's
+ * artwork. `Save` writes the real document, and that is the only thing the app treats as
+ * durable.
+ *
+ * It is validated through the same `parseProfile` as a file on disk. A draft written by
+ * an older build is exactly the case the migration chain exists for, and trusting it
+ * just because the app wrote it is how you end up with a corrupt store that cannot be
+ * cleared from inside the UI.
  */
 
-const KEY = 'cultural-mosaic:draft:v1'
 const SAVE_DEBOUNCE_MS = 400
 
 export interface DraftSummary {
@@ -25,66 +29,64 @@ export interface DraftSummary {
   readonly savedAt: string
 }
 
-export function readDraftSummary(): DraftSummary | null {
+async function readParsed(): Promise<ReturnType<typeof parseProfile> | null> {
   try {
-    const raw = localStorage.getItem(KEY)
-    if (!raw) return null
-    const parsed = parseProfile(JSON.parse(raw))
-    if (!parsed.ok) return null
-    return {
-      answered: parsed.profile.answers.length,
-      title: parsed.profile.title,
-      savedAt: parsed.profile.updatedAt,
-    }
+    const res = await window.mosaic.draftGet()
+    if (res.error || !res.contents) return null
+    return parseProfile(JSON.parse(res.contents))
   } catch {
     return null
   }
 }
 
-/** Load the draft into the store. Returns false if there was nothing usable. */
-export function loadDraft(): boolean {
-  try {
-    const raw = localStorage.getItem(KEY)
-    if (!raw) return false
-    const parsed = parseProfile(JSON.parse(raw))
-    if (!parsed.ok || parsed.profile.answers.length === 0) return false
-    // loadProfile switches to the studio; the caller decides where to go next.
-    useStore.getState().loadProfile(parsed.profile)
-    return true
-  } catch {
-    return false
+export async function readDraftSummary(): Promise<DraftSummary | null> {
+  const parsed = await readParsed()
+  if (!parsed || !parsed.ok) return null
+  return {
+    answered: parsed.profile.answers.length,
+    title: parsed.profile.title,
+    savedAt: parsed.profile.updatedAt,
   }
 }
 
-export function clearDraft(): void {
+/** Load the draft into the store. Resolves false if there was nothing usable. */
+export async function loadDraft(): Promise<boolean> {
+  const parsed = await readParsed()
+  if (!parsed || !parsed.ok || parsed.profile.answers.length === 0) return false
+  // loadProfile switches to the studio; the caller decides where to go next.
+  useStore.getState().loadProfile(parsed.profile)
+  return true
+}
+
+export async function clearDraft(): Promise<void> {
   try {
-    localStorage.removeItem(KEY)
+    await window.mosaic.draftSet(null)
   } catch {
-    /* nothing to do: the draft is a convenience, not state we depend on */
+    /* the draft is a convenience, not state the app depends on */
   }
 }
 
 let timer: number | undefined
 
 function write(): void {
-  try {
-    const s = useStore.getState()
-    if (s.answers.length === 0) {
-      localStorage.removeItem(KEY)
-      return
+  void (async () => {
+    try {
+      const s = useStore.getState()
+      await window.mosaic.draftSet(
+        s.answers.length === 0 ? null : JSON.stringify(s.toProfile('draft')),
+      )
+    } catch {
+      /* a failed autosave must never take the in-memory document with it */
     }
-    localStorage.setItem(KEY, JSON.stringify(s.toProfile('draft')))
-  } catch {
-    /* storage unavailable or full; the in-memory document is unaffected */
-  }
+  })()
 }
 
 /**
  * Subscribe to document changes and autosave, debounced.
  *
  * Debounced because dragging a slider fires a store update per notch, and serializing
- * the whole profile on each one would put a JSON round-trip on the input path. Returns
- * an unsubscribe function.
+ * the whole profile plus an IPC round-trip on each one would put real work on the input
+ * path. Returns an unsubscribe function.
  */
 export function startDraftAutosave(): () => void {
   const unsub = useStore.subscribe((s, prev) => {
@@ -100,4 +102,11 @@ export function startDraftAutosave(): () => void {
   }
 }
 
-export const DRAFT_KEY = KEY
+/** Flush any pending autosave immediately. Used before the window closes. */
+export function flushDraft(): void {
+  if (timer !== undefined) {
+    window.clearTimeout(timer)
+    timer = undefined
+  }
+  write()
+}

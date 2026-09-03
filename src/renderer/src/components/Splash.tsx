@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../state/store'
 import { loadDraft, readDraftSummary, clearDraft } from '../state/draft'
+import type { DraftSummary } from '../state/draft'
 import { QUIZ_LENGTH } from '../domain/quiz'
 import { LIBRARY } from '../domain/library'
 import { parseProfile } from '../domain/validate'
@@ -21,12 +22,19 @@ export default function Splash(): JSX.Element {
   const loadSample = useStore((s) => s.loadSample)
   const answersInMemory = useStore((s) => s.answers.length)
 
-  const [draft, setDraft] = useState(() => readDraftSummary())
+  const [draft, setDraft] = useState<DraftSummary | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
-  // Re-read on mount so a draft written by a previous session is picked up.
+  // The draft lives in a file, so reading it is async. Re-read on mount so one written
+  // by a previous session is picked up.
   useEffect(() => {
-    setDraft(readDraftSummary())
+    let alive = true
+    void readDraftSummary().then((d) => {
+      if (alive) setDraft(d)
+    })
+    return () => {
+      alive = false
+    }
   }, [])
 
   const counts = useMemo(() => {
@@ -43,8 +51,10 @@ export default function Splash(): JSX.Element {
       startQuiz(false)
       return
     }
-    if (loadDraft()) startQuiz(false)
-    else setNotice('That draft could not be read, so it has been cleared.')
+    void loadDraft().then((ok) => {
+      if (ok) startQuiz(false)
+      else setNotice('That draft could not be read, so it has been skipped.')
+    })
   }
 
   const onOpen = async (): Promise<void> => {
@@ -132,7 +142,7 @@ export default function Splash(): JSX.Element {
               title="Start over"
               detail="Discard the answers and begin the questions from the top."
               onClick={() => {
-                clearDraft()
+                void clearDraft()
                 setDraft(null)
                 startQuiz(true)
               }}
@@ -147,8 +157,12 @@ export default function Splash(): JSX.Element {
                 : 'Open the studio with nothing answered yet, and browse the library.'
             }
             onClick={() => {
-              if (!inProgress && resumable) loadDraft()
-              setMode('studio')
+              if (!inProgress && resumable) {
+                // loadProfile already lands in the studio.
+                void loadDraft()
+              } else {
+                setMode('studio')
+              }
             }}
           />
 

@@ -1,8 +1,8 @@
 import { dialog, app } from 'electron'
 import type { BrowserWindow } from 'electron'
-import { writeFile, readFile } from 'node:fs/promises'
+import { writeFile, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { SaveResult, OpenResult } from '../shared/ipc-contract'
+import type { SaveResult, OpenResult, DraftResult } from '../shared/ipc-contract'
 
 /**
  * The ONLY module in the app that touches `fs`.
@@ -53,6 +53,39 @@ export async function openProfile(win: BrowserWindow): Promise<OpenResult> {
     return { canceled: false, filePath: chosen, contents }
   } catch (err) {
     return { canceled: false, error: (err as Error).message }
+  }
+}
+
+/**
+ * The autosaved draft, in the app's own userData directory.
+ *
+ * The path is chosen HERE and never accepted from the renderer, so this stays consistent
+ * with the rest of the fs surface: main decides where things live.
+ */
+function draftPath(): string {
+  return join(app.getPath('userData'), 'draft.mosaic.json')
+}
+
+export async function readDraft(): Promise<DraftResult> {
+  try {
+    return { contents: await readFile(draftPath(), 'utf8') }
+  } catch (err) {
+    // A missing draft is the normal first-run case, not an error worth surfacing.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {}
+    return { error: (err as Error).message }
+  }
+}
+
+export async function writeDraft(json: string | null): Promise<DraftResult> {
+  try {
+    if (json === null) {
+      await rm(draftPath(), { force: true })
+      return {}
+    }
+    await writeFile(draftPath(), json, 'utf8')
+    return {}
+  } catch (err) {
+    return { error: (err as Error).message }
   }
 }
 
