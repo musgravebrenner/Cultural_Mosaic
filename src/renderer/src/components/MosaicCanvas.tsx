@@ -13,6 +13,7 @@ import { OverlayRenderer } from '../render/OverlayRenderer'
 import { getSolverSession } from '../solver/SolverSession'
 import { FREE, SOLID_PASSIVE, VOID_PASSIVE } from '../solver/protocol'
 import { deriveVolumeFraction } from '../layout/fields'
+import { exportPng } from '../render/export-png'
 import { THEMES } from '../render/tone'
 
 /**
@@ -138,8 +139,51 @@ export default function MosaicCanvas(): JSX.Element {
       seedDirty = true
     }
 
+    /**
+     * Export renders FRESH at the target size rather than scaling the display canvas,
+     * using whichever field is currently on screen (optimized result if a run has
+     * produced one, otherwise the seed).
+     */
+    const onExport = (ev: Event): void => {
+      const detail = (ev as CustomEvent<{ size: number; done: (err?: string) => void }>).detail
+      void (async () => {
+        try {
+          if (!derived) throw new Error('Nothing to export yet.')
+          const s = useStore.getState()
+          const density =
+            showingSolverOutput && session.latestFrame
+              ? session.latestFrame.density
+              : derived.fields.rho0
+          const bytes = await exportPng(
+            {
+              n: derived.fields.grid.n,
+              density,
+              hue: derived.fields.hue,
+              kappa: derived.fields.kappa,
+              mask: derived.fields.grid.mask,
+              ...(s.render.showGhost ? { ghost: derived.fields.rho0 } : {}),
+            },
+            s.render,
+            {
+              size: detail.size,
+              includeScaffolding: s.render.showScaffolding,
+              tiles: derived.tiles,
+              synthetics: derived.bc.syntheticAnchors,
+              rimRadius: s.layout.rimRadius,
+            },
+          )
+          const name = `${s.title.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'mosaic'}-${detail.size}.png`
+          const res = await window.mosaic.exportPng(bytes, name)
+          detail.done(res.error)
+        } catch (err) {
+          detail.done((err as Error).message)
+        }
+      })()
+    }
+
     window.addEventListener('mosaic:run', onRun)
     window.addEventListener('mosaic:reset', onReset)
+    window.addEventListener('mosaic:export', onExport)
 
     const rebuild = (): void => {
       const s = useStore.getState()
@@ -282,6 +326,7 @@ export default function MosaicCanvas(): JSX.Element {
       ro.disconnect()
       window.removeEventListener('mosaic:run', onRun)
       window.removeEventListener('mosaic:reset', onReset)
+      window.removeEventListener('mosaic:export', onExport)
       renderer.dispose()
     }
     // Empty deps: this effect runs once for the app's lifetime.

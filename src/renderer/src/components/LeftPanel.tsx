@@ -10,6 +10,7 @@ import {
 import type { CategoryId, FacetId } from '../domain/taxonomy'
 import { LEAN_NOTCHES, STRENGTH_LABELS } from '../domain/types'
 import RunControls from './RunControls'
+import CustomPairForm from './CustomPairForm'
 import type { LeanIndex, StrengthLevel, TileAnswer, WordPair } from '../domain/types'
 
 const CAT_CSS: Record<CategoryId, string> = {
@@ -345,6 +346,9 @@ function ProfileList(): JSX.Element {
           add the pairs that describe you. Each one deposits colour and material into the
           mosaic; where your identities agree, the structure holds.
         </p>
+        <div style={{ marginTop: 18 }}>
+          <CustomPairForm />
+        </div>
       </div>
     )
   }
@@ -355,6 +359,7 @@ function ProfileList(): JSX.Element {
       {ordered.map((a) => (
         <AnswerCard key={a.answerId} answer={a} />
       ))}
+      <CustomPairForm />
     </div>
   )
 }
