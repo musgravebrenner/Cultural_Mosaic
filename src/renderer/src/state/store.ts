@@ -49,7 +49,10 @@ export const DEFAULT_RENDER: RenderConfig = Object.freeze({
   solidHi: 0.6,
   theme: 'ink',
   showScaffolding: true,
-  edgeAccent: 0.35,
+  // 0.45 rather than 0.35 because the edge accent is now gated on coverage, which
+  // costs 10-30% of its strength in the visually dominant band. Saved profiles keep
+  // whatever they stored and render marginally softer.
+  edgeAccent: 0.45,
   showGhost: false,
 })
 

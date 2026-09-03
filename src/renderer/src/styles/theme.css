@@ -1,26 +1,61 @@
+/*
+ * Semantic chrome tokens. A component must never name a theme: it uses --bg, --panel,
+ * --border, --text and --text-dim, and switches for free.
+ *
+ * :root carries the INK values rather than a neutral third set, so the very first paint
+ * is already correct and there is no flash before the theme attribute is stamped.
+ * The paper block overrides only what differs.
+ *
+ * --bg MUST stay equal to THEMES[theme].bgHex in src/renderer/src/render/tone.ts. The
+ * canvas pane is painted from tone.ts and butts directly against chrome painted from
+ * here; a mismatch shows up as a seam down the middle of the window.
+ *
+ * The category colours deliberately do NOT live here. They are needed as NUMBERS to
+ * compute blends (the overlay marks, the custom-pair swatch), so CSS could only ever
+ * hold a second copy -- and the copy that used to be here had already drifted from the
+ * one every consumer used. Single source of truth: THEMES[theme].catCss.
+ */
 :root {
-  /* The three primary categories of Chao & Moon's taxonomy. */
-  --cat-demographic: #e5484d;
-  --cat-geographic: #46a758;
-  --cat-associative: #3e63dd;
+  --bg: #101014;
+  --panel: #17171c;
+  --border: #2a2a33;
+  --text: #e8e8ea;
+  --text-dim: #8b8b96;
 
-  /* Chrome. Never pure white or black -- that is the fastest way to make
-     generative output look like a screenshot of a debug view. */
-  --ink-bg: #101014;
-  --ink-panel: #17171c;
-  --ink-border: #2a2a33;
-  --ink-text: #e8e8ea;
-  --ink-text-dim: #8b8b96;
-
-  --paper-bg: #f4f1ea;
-  --paper-panel: #ffffff;
-  --paper-border: #ddd8cc;
-  --paper-text: #1a1a1c;
-  --paper-text-dim: #6b6b70;
+  /* Status colours, kept as their own tokens even where a hex coincides with a category
+     colour: a red notice must not read as "Demographic". */
+  --danger: #e5484d;
+  --warn: #d9a441;
+  --success: #46a758;
 
   --panel-width: 380px;
   --radius: 6px;
+
+  /* Drives the UA rendering of native scrollbars, checkboxes, <select> popups and the
+     range tracks used throughout the left panel, so it MUST switch with the theme. Under
+     the dark scheme on a light panel an UNCHECKED checkbox is drawn dark-filled -- the
+     control lies about its state -- and the ~40 visible range inputs become heavy black
+     bars. */
   color-scheme: dark;
+  /* Paints the checked checkbox and the range's filled track. Taxonomy-neutral on
+     purpose: an accent in a category colour would assert a meaning it does not have. */
+  accent-color: var(--text);
+}
+
+:root[data-theme='paper'] {
+  --bg: #f4f1ea;
+  --panel: #fbf9f4;
+  --border: #ddd7c9;
+  --text: #1c1a17;
+  --text-dim: #6a655c;
+
+  /* The shipped mid-tone status colours are unreadable on cream -- the amber measured
+     contrast 2.14 at 10px. These are 5.6 / 7.1 / 6.1. */
+  --danger: #a3232a;
+  --warn: #8a5a0f;
+  --success: #2f6b3c;
+
+  color-scheme: light;
 }
 
 * {
@@ -35,12 +70,17 @@ body,
 }
 
 body {
-  background: var(--ink-bg);
-  color: var(--ink-text);
+  background: var(--bg);
+  color: var(--text);
   font:
     13px/1.5 'Segoe UI Variable Text',
     'Segoe UI',
     system-ui,
     sans-serif;
   overflow: hidden;
+  /* Matches the canvas pane's own background transition, so the toggle reads as one
+     motion rather than the chrome snapping while the artwork fades. */
+  transition:
+    background 120ms,
+    color 120ms;
 }

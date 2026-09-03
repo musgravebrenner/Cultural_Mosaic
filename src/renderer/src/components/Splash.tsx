@@ -6,8 +6,8 @@ import { QUIZ_LENGTH } from '../domain/quiz'
 import { LIBRARY } from '../domain/library'
 import { parseProfile } from '../domain/validate'
 import { CATEGORIES, CATEGORY_LABEL } from '../domain/taxonomy'
+import { categoryCss, useThemeColors } from '../render/useThemeColors'
 
-const CAT_CSS = { demographic: '#e5484d', geographic: '#46a758', associative: '#5b6ee8' } as const
 
 /**
  * The entry screen.
@@ -21,6 +21,8 @@ export default function Splash(): JSX.Element {
   const setMode = useStore((s) => s.setMode)
   const loadSample = useStore((s) => s.loadSample)
   const answersInMemory = useStore((s) => s.answers.length)
+
+  const CAT_CSS = categoryCss(useThemeColors())
 
   const [draft, setDraft] = useState<DraftSummary | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -93,7 +95,7 @@ export default function Splash(): JSX.Element {
         <p
           style={{
             margin: '10px 0 4px',
-            color: 'var(--ink-text-dim)',
+            color: 'var(--text-dim)',
             lineHeight: 1.6,
             fontSize: 13,
           }}
@@ -110,7 +112,7 @@ export default function Splash(): JSX.Element {
             gap: 14,
             margin: '14px 0 22px',
             fontSize: 11,
-            color: 'var(--ink-text-dim)',
+            color: 'var(--text-dim)',
           }}
         >
           {CATEGORIES.map((c) => (
@@ -183,14 +185,14 @@ export default function Splash(): JSX.Element {
         </div>
 
         {notice && (
-          <div style={{ marginTop: 14, fontSize: 11, color: '#d9a441' }}>{notice}</div>
+          <div style={{ marginTop: 14, fontSize: 11, color: 'var(--warn)' }}>{notice}</div>
         )}
 
         <p
           style={{
             marginTop: 26,
             fontSize: 10,
-            color: 'var(--ink-text-dim)',
+            color: 'var(--text-dim)',
             lineHeight: 1.6,
           }}
         >
@@ -234,10 +236,10 @@ function Card({
         flex: 1,
         textAlign: 'left',
         padding: compact ? '10px 12px' : '13px 15px',
-        border: `1px solid ${primary ? 'var(--ink-text-dim)' : 'var(--ink-border)'}`,
+        border: `1px solid ${primary ? 'var(--text-dim)' : 'var(--border)'}`,
         borderRadius: 'var(--radius)',
-        background: primary ? 'var(--ink-panel)' : 'transparent',
-        color: 'var(--ink-text)',
+        background: primary ? 'var(--panel)' : 'transparent',
+        color: 'var(--text)',
         cursor: 'pointer',
         font: 'inherit',
         display: 'grid',
@@ -247,7 +249,7 @@ function Card({
       <span style={{ fontWeight: primary ? 600 : 500, fontSize: compact ? 12 : 13 }}>
         {title}
       </span>
-      <span style={{ color: 'var(--ink-text-dim)', fontSize: 11, lineHeight: 1.45 }}>
+      <span style={{ color: 'var(--text-dim)', fontSize: 11, lineHeight: 1.45 }}>
         {detail}
       </span>
     </button>

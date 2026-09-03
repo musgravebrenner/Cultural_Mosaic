@@ -31,12 +31,12 @@ export default function LeftPanel(): JSX.Element {
         flex: '0 0 auto',
         display: 'flex',
         flexDirection: 'column',
-        borderRight: '1px solid var(--ink-border)',
-        background: 'var(--ink-panel)',
+        borderRight: '1px solid var(--border)',
+        background: 'var(--panel)',
         minHeight: 0,
       }}
     >
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--ink-border)' }}>
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
         <TabButton active={tab === 'library'} onClick={() => setTab('library')}>
           Library
         </TabButton>
@@ -67,10 +67,10 @@ function TabButton({
       style={{
         flex: 1,
         padding: '10px 8px',
-        background: active ? 'var(--ink-bg)' : 'transparent',
-        color: active ? 'var(--ink-text)' : 'var(--ink-text-dim)',
+        background: active ? 'var(--bg)' : 'transparent',
+        color: active ? 'var(--text)' : 'var(--text-dim)',
         border: 'none',
-        borderBottom: active ? '2px solid var(--ink-text)' : '2px solid transparent',
+        borderBottom: active ? '2px solid var(--text)' : '2px solid transparent',
         cursor: 'pointer',
         font: 'inherit',
         fontWeight: active ? 600 : 400,
@@ -116,17 +116,17 @@ function LibraryBrowser(): JSX.Element {
         style={{
           width: '100%',
           padding: '7px 9px',
-          background: 'var(--ink-bg)',
-          border: '1px solid var(--ink-border)',
+          background: 'var(--bg)',
+          border: '1px solid var(--border)',
           borderRadius: 'var(--radius)',
-          color: 'var(--ink-text)',
+          color: 'var(--text)',
           font: 'inherit',
         }}
       />
 
       {hits ? (
         <div style={{ marginTop: 10 }}>
-          <div style={{ color: 'var(--ink-text-dim)', fontSize: 11, marginBottom: 6 }}>
+          <div style={{ color: 'var(--text-dim)', fontSize: 11, marginBottom: 6 }}>
             {hits.length} match{hits.length === 1 ? '' : 'es'}
           </div>
           {hits.map((p) => (
@@ -205,7 +205,7 @@ function FacetGroup({
           padding: '5px 4px 5px 15px',
           background: 'transparent',
           border: 'none',
-          color: 'var(--ink-text)',
+          color: 'var(--text)',
           font: 'inherit',
           cursor: 'pointer',
           display: 'flex',
@@ -215,7 +215,7 @@ function FacetGroup({
         <span>
           {open ? '▾' : '▸'} {FACET_LABEL[facet]}
         </span>
-        <span style={{ color: 'var(--ink-text-dim)' }}>{pairs.length}</span>
+        <span style={{ color: 'var(--text-dim)' }}>{pairs.length}</span>
       </button>
       {open && (
         <div style={{ paddingLeft: 8 }}>
@@ -223,7 +223,7 @@ function FacetGroup({
             <div
               style={{
                 fontSize: 10,
-                color: 'var(--ink-text-dim)',
+                color: 'var(--text-dim)',
                 padding: '2px 8px 6px',
                 lineHeight: 1.4,
               }}
@@ -269,7 +269,7 @@ function LibraryRow({
     >
       <MixBar mix={pair.mix} />
       <span style={{ flex: 1, fontSize: 12, lineHeight: 1.3 }}>
-        {pair.poleA} <span style={{ color: 'var(--ink-text-dim)' }}>↔</span> {pair.poleB}
+        {pair.poleA} <span style={{ color: 'var(--text-dim)' }}>↔</span> {pair.poleB}
       </span>
       <ImmutabilityPip v={pair.immutability} />
       <button
@@ -280,9 +280,9 @@ function LibraryRow({
           height: 22,
           flex: '0 0 auto',
           borderRadius: 4,
-          border: '1px solid var(--ink-border)',
-          background: added ? 'transparent' : 'var(--ink-bg)',
-          color: added ? '#46a758' : 'var(--ink-text)',
+          border: '1px solid var(--border)',
+          background: added ? 'transparent' : 'var(--bg)',
+          color: added ? 'var(--success)' : 'var(--text)',
           cursor: 'pointer',
           font: 'inherit',
         }}
@@ -306,7 +306,7 @@ function MixBar({ mix }: { mix: readonly [number, number, number] }): JSX.Elemen
         flex: '0 0 auto',
         borderRadius: 2,
         overflow: 'hidden',
-        background: 'var(--ink-bg)',
+        background: 'var(--bg)',
       }}
     >
       {mix.map((v, i) => (
@@ -334,7 +334,7 @@ function ImmutabilityPip({ v }: { v: number }): JSX.Element {
         height: 11,
         flex: '0 0 auto',
         borderRadius: 11,
-        border: '1px solid var(--ink-border)',
+        border: '1px solid var(--border)',
         display: 'grid',
         placeItems: 'center',
       }}
@@ -344,7 +344,7 @@ function ImmutabilityPip({ v }: { v: number }): JSX.Element {
           width: inner,
           height: inner,
           borderRadius: inner,
-          background: 'var(--ink-text)',
+          background: 'var(--text)',
           opacity: 0.3 + 0.7 * v,
         }}
       />
@@ -358,7 +358,7 @@ function ProfileList(): JSX.Element {
 
   if (answers.length === 0) {
     return (
-      <div style={{ padding: 24, color: 'var(--ink-text-dim)', lineHeight: 1.6 }}>
+      <div style={{ padding: 24, color: 'var(--text-dim)', lineHeight: 1.6 }}>
         <p style={{ marginTop: 0 }}>Nothing added yet.</p>
         <p>
           Browse the <button onClick={() => setTab('library')} style={linkBtn}>library</button> and
@@ -387,7 +387,7 @@ const linkBtn: React.CSSProperties = {
   background: 'none',
   border: 'none',
   padding: 0,
-  color: 'var(--ink-text)',
+  color: 'var(--text)',
   textDecoration: 'underline',
   cursor: 'pointer',
   font: 'inherit',
@@ -412,10 +412,10 @@ function AnswerCard({ answer }: { answer: TileAnswer }): JSX.Element {
       onMouseEnter={() => setHovered(answer.answerId)}
       onMouseLeave={() => setHovered(null)}
       style={{
-        border: '1px solid var(--ink-border)',
+        border: '1px solid var(--border)',
         borderRadius: 'var(--radius)',
         padding: '8px 10px 10px',
-        background: 'var(--ink-bg)',
+        background: 'var(--bg)',
         opacity: dormant ? 0.45 : 1,
       }}
     >
@@ -428,7 +428,7 @@ function AnswerCard({ answer }: { answer: TileAnswer }): JSX.Element {
             background: CAT_CSS[pair.category],
           }}
         />
-        <span style={{ fontSize: 10, color: 'var(--ink-text-dim)', flex: 1 }}>
+        <span style={{ fontSize: 10, color: 'var(--text-dim)', flex: 1 }}>
           {CATEGORY_LABEL[pair.category]} ·{' '}
           {pair.facet === 'custom' ? 'Custom' : FACET_LABEL[pair.facet]}
         </span>
@@ -445,7 +445,7 @@ function AnswerCard({ answer }: { answer: TileAnswer }): JSX.Element {
       />
 
       <div style={{ marginTop: 9 }}>
-        <div style={{ fontSize: 10, color: 'var(--ink-text-dim)', marginBottom: 3 }}>
+        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 3 }}>
           Matters to me
         </div>
         <StrengthSelector
@@ -456,14 +456,14 @@ function AnswerCard({ answer }: { answer: TileAnswer }): JSX.Element {
 
       <details style={{ marginTop: 8 }}>
         <summary
-          style={{ fontSize: 10, color: 'var(--ink-text-dim)', cursor: 'pointer' }}
+          style={{ fontSize: 10, color: 'var(--text-dim)', cursor: 'pointer' }}
           title="Sets how far from the centre this lands, and whether it pins or pulls."
         >
           Fixedness {immutability.toFixed(2)}
           {answer.immutabilityOverride !== undefined ? ' (yours)' : ''}
         </summary>
         <div style={{ paddingTop: 6 }}>
-          <div style={{ fontSize: 10, color: 'var(--ink-text-dim)', marginBottom: 4 }}>
+          <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 4 }}>
             Could you change this by a decision this year?
           </div>
           <input
@@ -480,7 +480,7 @@ function AnswerCard({ answer }: { answer: TileAnswer }): JSX.Element {
               display: 'flex',
               justifyContent: 'space-between',
               fontSize: 9,
-              color: 'var(--ink-text-dim)',
+              color: 'var(--text-dim)',
             }}
           >
             <span>chosen daily</span>
@@ -497,7 +497,7 @@ function AnswerCard({ answer }: { answer: TileAnswer }): JSX.Element {
         </div>
       </details>
 
-      <div style={{ marginTop: 6, fontSize: 10, color: 'var(--ink-text-dim)' }}>
+      <div style={{ marginTop: 6, fontSize: 10, color: 'var(--text-dim)' }}>
         {leanWord(lean, pair.poleA, pair.poleB)}
         {dormant ? ' · contributes nothing while dormant' : ''}
       </div>
@@ -511,7 +511,7 @@ const iconBtn: React.CSSProperties = {
   border: 'none',
   borderRadius: 3,
   background: 'transparent',
-  color: 'var(--ink-text-dim)',
+  color: 'var(--text-dim)',
   cursor: 'pointer',
   font: 'inherit',
   lineHeight: 1,
@@ -578,7 +578,7 @@ function PolePairSlider({
           display: 'flex',
           justifyContent: 'space-between',
           fontSize: 8,
-          color: 'var(--ink-text-dim)',
+          color: 'var(--text-dim)',
           padding: '0 2px',
         }}
       >
@@ -619,9 +619,9 @@ function StrengthSelector({
             cursor: 'pointer',
             font: 'inherit',
             fontWeight: value === i ? 600 : 400,
-            border: `1px solid ${value === i ? 'var(--ink-text-dim)' : 'var(--ink-border)'}`,
-            background: value === i ? 'var(--ink-panel)' : 'transparent',
-            color: value === i ? 'var(--ink-text)' : 'var(--ink-text-dim)',
+            border: `1px solid ${value === i ? 'var(--text-dim)' : 'var(--border)'}`,
+            background: value === i ? 'var(--panel)' : 'transparent',
+            color: value === i ? 'var(--text)' : 'var(--text-dim)',
           }}
         >
           {label}

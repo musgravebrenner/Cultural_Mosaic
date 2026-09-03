@@ -1,5 +1,6 @@
 import type { RenderConfig } from '../domain/types'
-import { THEMES, hueToLinear, linearToSrgb8, smoothstep } from './tone'
+import { THEMES, convictionToSaturation, hueToLinear, linearToSrgb8, smoothstep } from './tone'
+import type { ThemeColors } from './tone'
 
 /**
  * Density + hue -> pixels.
@@ -88,7 +89,7 @@ export class FieldRenderer {
         let b = bgB
 
         if (mask[i]) {
-          let a = smoothstep(cfg.solidLo, cfg.solidHi, density[i]!)
+          const a = smoothstep(cfg.solidLo, cfg.solidHi, density[i]!)
 
           // The ghost layer -- Proposition 3(c). Compliance minimization exists to
           // eliminate structural redundancy, but the paper holds that structurally
@@ -101,23 +102,34 @@ export class FieldRenderer {
           let ga = 0
           if (useGhost) {
             const seeded = smoothstep(cfg.solidLo, cfg.solidHi, ghost![i]!)
-            ga = Math.max(0, seeded - a) * 0.22
+            ga = Math.max(0, seeded - a) * theme.ghostAlpha
           }
 
-          if (a > 0 || ga > 0) {
-            hueToLinear(hue[3 * i]!, hue[3 * i + 1]!, hue[3 * i + 2]!, kappa[i]!, rgb)
-            // Desaturate toward the void: thin regions fade toward the background tone
-            // rather than toward grey. Grey reads as missing data; paper reads as
-            // negative space.
-            const total = a + ga
-            const sat = a / Math.max(total, 1e-6)
-            const cr = rgb[0] * sat + bgR * (1 - sat)
-            const cg = rgb[1] * sat + bgG * (1 - sat)
-            const cb = rgb[2] * sat + bgB * (1 - sat)
-            a = Math.min(1, total)
-            r = cr * a + bgR * (1 - a)
-            g = cg * a + bgG * (1 - a)
-            b = cb * a + bgB * (1 - a)
+          /**
+           * Ghost UNDER, live material OVER, same hue: two source-over composites of
+           * one colour collapse to a single composite at this effective coverage.
+           *
+           * The previous `sat = a / total` form was algebraically the IDENTITY --
+           * sat * min(1, total) equals a exactly whenever total <= 1 -- so the ghost
+           * toggle drew nothing at all on either theme, and in the total > 1 branch it
+           * made the surviving material paler, which is backwards.
+           */
+          const aEff = a + ga * (1 - a)
+          if (aEff > 0) {
+            // Conviction -> saturation, faded toward the BACKGROUND rather than toward
+            // black, so a weakly-held identity is a faint tint of its own colour on
+            // both themes instead of a dark smudge on the light one.
+            hueToLinear(
+              hue[3 * i]!,
+              hue[3 * i + 1]!,
+              hue[3 * i + 2]!,
+              convictionToSaturation(kappa[i]!),
+              theme,
+              rgb,
+            )
+            r = bgR + aEff * (rgb[0]! - bgR)
+            g = bgG + aEff * (rgb[1]! - bgG)
+            b = bgB + aEff * (rgb[2]! - bgB)
           }
         }
 
@@ -129,7 +141,7 @@ export class FieldRenderer {
       }
     }
 
-    if (cfg.edgeAccent > 0) this.applyEdgeAccent(frame, cfg, px)
+    if (cfg.edgeAccent > 0) this.applyEdgeAccent(frame, cfg, theme, px)
 
     this.fieldCtx.putImageData(img, 0, 0)
     this.blit(cfg)
@@ -138,10 +150,30 @@ export class FieldRenderer {
   /**
    * Cheap gradient magnitude of rho, darkening the solid/void boundary slightly. Gives
    * the truss an inked, drawn quality for one extra pass.
+   *
+   * GATED ON COVERAGE, which is the whole subtlety. Ungated, the multiply darkens the
+   * void exactly as hard as it darkens the material -- and because L* is a cube-root
+   * curve that is nearly invisible on near-black but takes 30 L* out of a cream pixel.
+   * So on paper the accent's centre of mass moved off the structure and became a grey
+   * halo standing in the empty space around it: the artifact was inverted in LOCATION,
+   * not merely too strong, which no magnitude scale could fix. Gating on coverage makes
+   * it a line on the inner edge of the material on both themes.
+   *
+   * It is also a latent fix for the ink theme, where the structure previously carried a
+   * faint rim two L* darker than its own background.
+   *
+   * The multiply deliberately stays in sRGB byte space. Moving it to linear light would
+   * be more principled, but a 0.65 gamma-space factor is a 0.34 linear one, so the ink
+   * accent would weaken about 2.5x for no benefit once the halo is gone.
    */
-  private applyEdgeAccent(frame: FieldFrame, cfg: RenderConfig, px: Uint8ClampedArray): void {
+  private applyEdgeAccent(
+    frame: FieldFrame,
+    cfg: RenderConfig,
+    theme: ThemeColors,
+    px: Uint8ClampedArray,
+  ): void {
     const { n, density, mask } = frame
-    const k = cfg.edgeAccent
+    const k = cfg.edgeAccent * theme.edgeScale
     for (let ey = 1; ey < n - 1; ey++) {
       for (let ex = 1; ex < n - 1; ex++) {
         const i = ey * n + ex
@@ -150,7 +182,9 @@ export class FieldRenderer {
         const gy = Math.abs(density[i + n]! - density[i - n]!)
         const mag = Math.min(1, (gx + gy) * 1.5)
         if (mag < 0.02) continue
-        const f = 1 - k * mag
+        const cover = smoothstep(cfg.solidLo, cfg.solidHi, density[i]!)
+        if (cover <= 0) continue
+        const f = Math.max(0, 1 - k * mag * cover)
         // Same row flip as the compose pass; reading grid space, writing pixel space.
         const o = ((n - 1 - ey) * n + ex) << 2
         px[o] = px[o]! * f

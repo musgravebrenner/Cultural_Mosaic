@@ -4,10 +4,12 @@ import { circularMean } from '../layout/polar'
 import type { Cat3 } from '../domain/types'
 import { CATEGORY_OF_FACET, FACET_LABEL } from '../domain/taxonomy'
 import type { CategoryId, FacetId } from '../domain/taxonomy'
+import { useThemeColors } from '../render/useThemeColors'
 
-const CAT_CSS = ['#e5484d', '#46a758', '#5b6ee8'] as const
 
 export default function CustomPairForm(): JSX.Element {
+  const theme = useThemeColors()
+  const CAT_CSS = theme.catCss
   const addCustomPair = useStore((s) => s.addCustomPair)
   const existing = useStore((s) => s.customPairs)
 
@@ -106,7 +108,7 @@ export default function CustomPairForm(): JSX.Element {
           onChange={(e) => setImmutability(Number(e.target.value))}
           style={{ width: '100%' }}
         />
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--ink-text-dim)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--text-dim)' }}>
           <span>chosen daily</span>
           <span>long-term</span>
           <span>given at birth</span>
@@ -136,7 +138,7 @@ export default function CustomPairForm(): JSX.Element {
           alignItems: 'center',
           gap: 8,
           fontSize: 10,
-          color: 'var(--ink-text-dim)',
+          color: 'var(--text-dim)',
         }}
       >
         <span
@@ -144,8 +146,8 @@ export default function CustomPairForm(): JSX.Element {
             width: 16,
             height: 16,
             borderRadius: 3,
-            background: swatch(norm),
-            border: '1px solid var(--ink-border)',
+            background: swatch(norm, CAT_CSS),
+            border: '1px solid var(--border)',
           }}
         />
         {degenerate ? (
@@ -159,12 +161,12 @@ export default function CustomPairForm(): JSX.Element {
       </div>
 
       {duplicate && (
-        <div style={{ fontSize: 10, color: '#d9a441' }}>
+        <div style={{ fontSize: 10, color: 'var(--warn)' }}>
           You already have a pair with these poles. Adding it again is allowed.
         </div>
       )}
       {errors.map((e) => (
-        <div key={e} style={{ fontSize: 10, color: '#e5484d' }}>
+        <div key={e} style={{ fontSize: 10, color: 'var(--danger)' }}>
           {e}
         </div>
       ))}
@@ -206,6 +208,7 @@ function TernaryPicker({
   value: Cat3
   onChange: (c: Cat3) => void
 }): JSX.Element {
+  const CAT_CSS = useThemeColors().catCss
   const size = 88
   const h = (size * Math.sqrt(3)) / 2
   // Vertices: Demographic top, Geographic bottom-left, Associative bottom-right.
@@ -250,9 +253,9 @@ function TernaryPicker({
         points={V.map(([x, y]) => `${x},${y}`).join(' ')}
         fill="url(#tri)"
         opacity={0.35}
-        stroke="var(--ink-border)"
+        stroke="var(--border)"
       />
-      <circle cx={px} cy={py} r={4.5} fill="var(--ink-text)" stroke="var(--ink-bg)" strokeWidth={1.5} />
+      <circle cx={px} cy={py} r={4.5} fill="var(--text)" stroke="var(--bg)" strokeWidth={1.5} />
     </svg>
   )
 }
@@ -272,23 +275,30 @@ function dominantCategory(c: Cat3): CategoryId {
   return 'associative'
 }
 
-function swatch(c: Cat3): string {
-  const cols = [
-    [0xe5, 0x48, 0x4d],
-    [0x46, 0xa7, 0x58],
-    [0x5b, 0x6e, 0xe8],
-  ]
+/**
+ * The preview swatch, mixed from the ACTIVE theme's inks.
+ *
+ * Takes the palette as bytes rather than as CSS strings because it computes a weighted
+ * average, and mixing has to happen in numbers. Previously it carried its own hardcoded
+ * copy of the ink palette, so on paper the preview would have shown a colour the mosaic
+ * never renders.
+ */
+function swatch(c: Cat3, catCss: readonly string[]): string {
+  const cols = catCss.map((hex) => {
+    const h = hex.replace('#', '')
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+  })
   const m = (i: number): number =>
     Math.round(c[0] * cols[0]![i]! + c[1] * cols[1]![i]! + c[2] * cols[2]![i]!)
   return `rgb(${m(0)}, ${m(1)}, ${m(2)})`
 }
 
 const box: React.CSSProperties = {
-  border: '1px solid var(--ink-border)',
+  border: '1px solid var(--border)',
   borderRadius: 'var(--radius)',
   padding: 10,
-  background: 'var(--ink-bg)',
-  color: 'var(--ink-text)',
+  background: 'var(--bg)',
+  color: 'var(--text)',
   font: 'inherit',
   fontSize: 11,
   textAlign: 'left',
@@ -297,20 +307,20 @@ const box: React.CSSProperties = {
 const input: React.CSSProperties = {
   width: '100%',
   padding: '4px 6px',
-  background: 'var(--ink-panel)',
-  border: '1px solid var(--ink-border)',
+  background: 'var(--panel)',
+  border: '1px solid var(--border)',
   borderRadius: 4,
-  color: 'var(--ink-text)',
+  color: 'var(--text)',
   font: 'inherit',
   fontSize: 11,
 }
 
 const smallBtn: React.CSSProperties = {
   padding: '4px 12px',
-  border: '1px solid var(--ink-border)',
+  border: '1px solid var(--border)',
   borderRadius: 4,
-  background: 'var(--ink-panel)',
-  color: 'var(--ink-text)',
+  background: 'var(--panel)',
+  color: 'var(--text)',
   cursor: 'pointer',
   font: 'inherit',
   fontSize: 11,
@@ -319,7 +329,7 @@ const smallBtn: React.CSSProperties = {
 function Field({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
   return (
     <label style={{ display: 'grid', gap: 3 }}>
-      <span style={{ fontSize: 10, color: 'var(--ink-text-dim)' }}>{label}</span>
+      <span style={{ fontSize: 10, color: 'var(--text-dim)' }}>{label}</span>
       {children}
     </label>
   )

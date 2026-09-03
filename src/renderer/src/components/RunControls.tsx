@@ -62,9 +62,9 @@ export default function RunControls(): JSX.Element {
   return (
     <div
       style={{
-        borderTop: '1px solid var(--ink-border)',
+        borderTop: '1px solid var(--border)',
         padding: '8px 10px',
-        background: 'var(--ink-panel)',
+        background: 'var(--panel)',
         flex: '0 0 auto',
       }}
     >
@@ -76,7 +76,7 @@ export default function RunControls(): JSX.Element {
           ↺
         </button>
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, color: 'var(--ink-text-dim)', fontVariantNumeric: 'tabular-nums' }}>
+        <span style={{ fontSize: 10, color: 'var(--text-dim)', fontVariantNumeric: 'tabular-nums' }}>
           {progress
             ? `${progress.iteration}/${solver.iterations} · vol ${progress.volume.toFixed(2)} · C ${progress.compliance.toPrecision(3)}`
             : disabled
@@ -86,7 +86,7 @@ export default function RunControls(): JSX.Element {
       </div>
 
       {progress && (progress.islands > 0 || progress.unsupportedLoads > 0 || !progress.cgConverged) && (
-        <div style={{ marginTop: 5, fontSize: 10, color: '#d9a441', lineHeight: 1.4 }}>
+        <div style={{ marginTop: 5, fontSize: 10, color: 'var(--warn)', lineHeight: 1.4 }}>
           {progress.islands > 0 && (
             <div>
               {progress.islands} fragment{progress.islands === 1 ? '' : 's'} floating free of the
@@ -184,7 +184,7 @@ export default function RunControls(): JSX.Element {
               style={{ width: '100%' }}
             />
           </Row>
-          <div style={{ color: 'var(--ink-text-dim)', lineHeight: 1.45 }}>
+          <div style={{ color: 'var(--text-dim)', lineHeight: 1.45 }}>
             Volume is derived from how strongly you answered: decisive identities give a
             dense, load-bearing mosaic; tentative ones give a thin, filigree one.
           </div>
@@ -197,7 +197,7 @@ export default function RunControls(): JSX.Element {
 function Row({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
   return (
     <label style={{ display: 'grid', gap: 3 }}>
-      <span style={{ color: 'var(--ink-text-dim)' }}>{label}</span>
+      <span style={{ color: 'var(--text-dim)' }}>{label}</span>
       {children}
     </label>
   )
@@ -213,7 +213,7 @@ function Seg<T extends string | number>({
   onChange: (v: T) => void
 }): JSX.Element {
   return (
-    <div style={{ display: 'flex', border: '1px solid var(--ink-border)', borderRadius: 4 }}>
+    <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 4 }}>
       {options.map((o) => (
         <button
           key={String(o)}
@@ -222,8 +222,8 @@ function Seg<T extends string | number>({
             flex: 1,
             padding: '3px 0',
             border: 'none',
-            background: value === o ? 'var(--ink-bg)' : 'transparent',
-            color: value === o ? 'var(--ink-text)' : 'var(--ink-text-dim)',
+            background: value === o ? 'var(--bg)' : 'transparent',
+            color: value === o ? 'var(--text)' : 'var(--text-dim)',
             cursor: 'pointer',
             font: 'inherit',
             fontSize: 10,
@@ -238,10 +238,10 @@ function Seg<T extends string | number>({
 
 const btn: React.CSSProperties = {
   padding: '5px 9px',
-  border: '1px solid var(--ink-border)',
+  border: '1px solid var(--border)',
   borderRadius: 4,
-  background: 'var(--ink-bg)',
-  color: 'var(--ink-text)',
+  background: 'var(--bg)',
+  color: 'var(--text)',
   cursor: 'pointer',
   font: 'inherit',
   fontSize: 12,
@@ -261,7 +261,7 @@ const linkish: React.CSSProperties = {
   background: 'none',
   border: 'none',
   padding: 0,
-  color: 'var(--ink-text-dim)',
+  color: 'var(--text-dim)',
   cursor: 'pointer',
   font: 'inherit',
   fontSize: 10,

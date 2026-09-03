@@ -105,14 +105,14 @@ export default function Toolbar(): JSX.Element {
         alignItems: 'center',
         gap: 12,
         padding: '7px 12px',
-        borderBottom: '1px solid var(--ink-border)',
-        background: 'var(--ink-panel)',
+        borderBottom: '1px solid var(--border)',
+        background: 'var(--panel)',
         flex: '0 0 auto',
         fontSize: 12,
       }}
     >
       <strong style={{ fontWeight: 600 }}>Cultural Mosaic</strong>
-      <span style={{ color: 'var(--ink-text-dim)' }}>
+      <span style={{ color: 'var(--text-dim)' }}>
         {title}
         {dirty ? ' *' : ''}
       </span>
@@ -143,7 +143,12 @@ export default function Toolbar(): JSX.Element {
         <span
           style={{
             fontSize: 11,
-            color: notice.tone === 'bad' ? '#e5484d' : notice.tone === 'warn' ? '#d9a441' : '#46a758',
+            color:
+              notice.tone === 'bad'
+                ? 'var(--danger)'
+                : notice.tone === 'warn'
+                  ? 'var(--warn)'
+                  : 'var(--success)',
             maxWidth: 380,
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -208,8 +213,8 @@ function ExportMenu({
             top: '110%',
             left: 0,
             zIndex: 10,
-            background: 'var(--ink-panel)',
-            border: '1px solid var(--ink-border)',
+            background: 'var(--panel)',
+            border: '1px solid var(--border)',
             borderRadius: 4,
             padding: 4,
             display: 'grid',
@@ -245,10 +250,10 @@ function slug(s: string): string {
 
 const barBtn: React.CSSProperties = {
   padding: '3px 10px',
-  border: '1px solid var(--ink-border)',
+  border: '1px solid var(--border)',
   borderRadius: 4,
-  background: 'var(--ink-bg)',
-  color: 'var(--ink-text)',
+  background: 'var(--bg)',
+  color: 'var(--text)',
   cursor: 'pointer',
   font: 'inherit',
   fontSize: 11,
@@ -271,7 +276,7 @@ function Toggle({
       style={{ display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}
     >
       <input type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked)} />
-      <span style={{ color: on ? 'var(--ink-text)' : 'var(--ink-text-dim)' }}>{label}</span>
+      <span style={{ color: on ? 'var(--text)' : 'var(--text-dim)' }}>{label}</span>
     </label>
   )
 }
@@ -286,7 +291,7 @@ function Segmented<T extends string>({
   onChange: (v: T) => void
 }): JSX.Element {
   return (
-    <div style={{ display: 'flex', border: '1px solid var(--ink-border)', borderRadius: 4 }}>
+    <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 4 }}>
       {options.map((o) => (
         <button
           key={o}
@@ -294,8 +299,8 @@ function Segmented<T extends string>({
           style={{
             padding: '3px 9px',
             border: 'none',
-            background: value === o ? 'var(--ink-bg)' : 'transparent',
-            color: value === o ? 'var(--ink-text)' : 'var(--ink-text-dim)',
+            background: value === o ? 'var(--bg)' : 'transparent',
+            color: value === o ? 'var(--text)' : 'var(--text-dim)',
             cursor: 'pointer',
             font: 'inherit',
             fontSize: 11,

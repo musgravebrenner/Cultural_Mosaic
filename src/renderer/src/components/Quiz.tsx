@@ -2,15 +2,10 @@ import { useCallback, useEffect, useMemo } from 'react'
 import { useStore } from '../state/store'
 import { FACET_PREAMBLE, QUIZ_LENGTH, QUIZ_ORDER, isCentralityQuestion, pairAt } from '../domain/quiz'
 import { CATEGORY_LABEL, FACET_LABEL } from '../domain/taxonomy'
-import type { CategoryId } from '../domain/taxonomy'
+import { categoryCss, useThemeColors } from '../render/useThemeColors'
 import { LEAN_CENTER, LEAN_NOTCHES, STRENGTH_LABELS } from '../domain/types'
 import type { LeanIndex, StrengthLevel } from '../domain/types'
 
-const CAT_CSS: Record<CategoryId, string> = {
-  demographic: '#e5484d',
-  geographic: '#46a758',
-  associative: '#5b6ee8',
-}
 
 /**
  * One question at a time through the whole library.
@@ -27,6 +22,8 @@ export default function Quiz(): JSX.Element {
   const answers = useStore((s) => s.answers)
   const answerQuiz = useStore((s) => s.answerQuiz)
   const skipQuiz = useStore((s) => s.skipQuiz)
+
+  const CAT_CSS = categoryCss(useThemeColors())
 
   const pair = pairAt(index)
   const answeredIds = useMemo(() => new Set(answers.map((a) => a.pairId)), [answers])
@@ -120,10 +117,10 @@ export default function Quiz(): JSX.Element {
                   borderRadius: 1,
                   background:
                     i === index
-                      ? 'var(--ink-text)'
+                      ? 'var(--text)'
                       : done
                         ? CAT_CSS[p?.category ?? 'associative']
-                        : 'var(--ink-border)',
+                        : 'var(--border)',
                   opacity: i === index ? 1 : done ? 0.85 : 0.55,
                 }}
               />
@@ -136,7 +133,7 @@ export default function Quiz(): JSX.Element {
             justifyContent: 'space-between',
             marginTop: 7,
             fontSize: 11,
-            color: 'var(--ink-text-dim)',
+            color: 'var(--text-dim)',
           }}
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -169,7 +166,7 @@ export default function Quiz(): JSX.Element {
           <div
             style={{
               fontSize: 11,
-              color: 'var(--ink-text-dim)',
+              color: 'var(--text-dim)',
               lineHeight: 1.5,
               marginBottom: 18,
               paddingLeft: 11,
@@ -187,7 +184,7 @@ export default function Quiz(): JSX.Element {
             strong={leanValue < -0.5}
             onClick={() => commit(0, strength)}
           />
-          <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--ink-text-dim)' }}>
+          <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--text-dim)' }}>
             or
           </div>
           <Pole
@@ -215,7 +212,7 @@ export default function Quiz(): JSX.Element {
               right: 10,
               top: 19,
               height: 2,
-              background: 'var(--ink-border)',
+              background: 'var(--border)',
               borderRadius: 2,
             }}
           />
@@ -245,13 +242,13 @@ export default function Quiz(): JSX.Element {
                       width: d,
                       height: d,
                       borderRadius: d,
-                      background: selected ? CAT_CSS[pair.category] : 'var(--ink-bg)',
+                      background: selected ? CAT_CSS[pair.category] : 'var(--bg)',
                       border: `2px solid ${
                         selected
                           ? CAT_CSS[pair.category]
                           : isCentre
-                            ? 'var(--ink-text-dim)'
-                            : 'var(--ink-border)'
+                            ? 'var(--text-dim)'
+                            : 'var(--border)'
                       }`,
                       boxShadow: selected ? '0 0 0 4px rgba(255,255,255,0.06)' : 'none',
                       transition: 'width 80ms, height 80ms',
@@ -267,7 +264,7 @@ export default function Quiz(): JSX.Element {
             display: 'flex',
             justifyContent: 'space-between',
             fontSize: 10,
-            color: 'var(--ink-text-dim)',
+            color: 'var(--text-dim)',
             marginBottom: 20,
           }}
         >
@@ -276,7 +273,7 @@ export default function Quiz(): JSX.Element {
           <span>strongly the second</span>
         </div>
 
-        <div style={{ fontSize: 11, color: 'var(--ink-text-dim)', marginBottom: 6 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 6 }}>
           How much does this matter to you?
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
@@ -289,10 +286,10 @@ export default function Quiz(): JSX.Element {
                 style={{
                   flex: 1,
                   padding: '7px 4px',
-                  border: `1px solid ${selected ? 'var(--ink-text-dim)' : 'var(--ink-border)'}`,
+                  border: `1px solid ${selected ? 'var(--text-dim)' : 'var(--border)'}`,
                   borderRadius: 4,
-                  background: selected ? 'var(--ink-panel)' : 'transparent',
-                  color: selected ? 'var(--ink-text)' : 'var(--ink-text-dim)',
+                  background: selected ? 'var(--panel)' : 'transparent',
+                  color: selected ? 'var(--text)' : 'var(--text-dim)',
                   fontWeight: selected ? 600 : 400,
                   cursor: 'pointer',
                   font: 'inherit',
@@ -304,14 +301,14 @@ export default function Quiz(): JSX.Element {
             )
           })}
         </div>
-        <div style={{ fontSize: 10, color: 'var(--ink-text-dim)', marginTop: 6, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 6, lineHeight: 1.5 }}>
           Dormant keeps the pair on file but contributes nothing. Answering{' '}
           <em>equally both</em> at full strength is not the same thing — it deposits the
           most diffuse strong material in the model.
         </div>
 
         {optional && (
-          <div style={{ fontSize: 10, color: '#d9a441', marginTop: 14, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 10, color: 'var(--warn)', marginTop: 14, lineHeight: 1.5 }}>
             This one is personal and entirely optional. Skipping it costs the mosaic one
             rim anchor and nothing else.
           </div>
@@ -339,7 +336,7 @@ export default function Quiz(): JSX.Element {
         </button>
       </div>
 
-        <div style={{ fontSize: 9, color: 'var(--ink-text-dim)', marginTop: 12, textAlign: 'center' }}>
+        <div style={{ fontSize: 9, color: 'var(--text-dim)', marginTop: 12, textAlign: 'center' }}>
         keys: 1–7 lean · Q W E R strength · S skip · ← → move · Enter next · Esc to graph
       </div>
       </div>
@@ -364,10 +361,10 @@ function Pole({
       onClick={onClick}
       style={{
         padding: '15px 18px',
-        border: `1px solid ${active ? 'var(--ink-text-dim)' : 'var(--ink-border)'}`,
+        border: `1px solid ${active ? 'var(--text-dim)' : 'var(--border)'}`,
         borderRadius: 'var(--radius)',
-        background: active ? 'var(--ink-panel)' : 'transparent',
-        color: 'var(--ink-text)',
+        background: active ? 'var(--panel)' : 'transparent',
+        color: 'var(--text)',
         cursor: 'pointer',
         font: 'inherit',
         fontSize: 16,
@@ -384,10 +381,10 @@ function Pole({
 
 const navBtn: React.CSSProperties = {
   padding: '6px 12px',
-  border: '1px solid var(--ink-border)',
+  border: '1px solid var(--border)',
   borderRadius: 4,
-  background: 'var(--ink-bg)',
-  color: 'var(--ink-text)',
+  background: 'var(--bg)',
+  color: 'var(--text)',
   cursor: 'pointer',
   font: 'inherit',
   fontSize: 12,

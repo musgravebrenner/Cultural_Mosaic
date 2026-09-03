@@ -19,6 +19,25 @@ import { QUIZ_ORDER } from './domain/quiz'
  */
 ;(window as unknown as { __mosaic?: unknown }).__mosaic = { store: useStore, quizOrder: QUIZ_ORDER }
 
+/**
+ * Theme -> <html data-theme>. Outside React on purpose.
+ *
+ * <html> rather than <body> because `color-scheme` on the ROOT element is what sets the
+ * used colour scheme for the viewport, so the root scrollbar follows only the root.
+ *
+ * Outside React because App sits above MosaicCanvas, and this app's architecture depends
+ * on nothing above MosaicCanvas subscribing to store slices. The store's vanilla
+ * subscribe is the first-class path for exactly this. It also runs BEFORE the first
+ * render, so a draft restored with theme 'paper' never flashes dark chrome.
+ */
+function applyTheme(t: 'ink' | 'paper'): void {
+  document.documentElement.dataset['theme'] = t
+}
+applyTheme(useStore.getState().render.theme)
+useStore.subscribe((s, prev) => {
+  if (s.render.theme !== prev.render.theme) applyTheme(s.render.theme)
+})
+
 const el = document.getElementById('root')
 if (!el) throw new Error('#root missing from index.html')
 

@@ -1,6 +1,7 @@
 import type { PlacedTile, RenderConfig } from '../domain/types'
 import { CATEGORY_LABEL, SECTOR_CENTER_DEG } from '../domain/taxonomy'
 import { THEMES } from './tone'
+import type { ThemeColors } from './tone'
 
 /**
  * Sector guides, pinned-anchor ground symbols, load arrows, hover ring.
@@ -25,8 +26,6 @@ export interface OverlayInput {
   /** Iteration count, for the load-arrow pulse. 0 when idle. */
   readonly phase: number
 }
-
-const CATEGORY_CSS = ['#e5484d', '#46a758', '#5b6ee8'] as const
 
 export class OverlayRenderer {
   constructor(
@@ -63,7 +62,7 @@ export class OverlayRenderer {
     }
 
     for (const t of input.tiles) {
-      if (t.role === 'anchor') this.drawGroundSymbol(t, scale, px, py)
+      if (t.role === 'anchor') this.drawGroundSymbol(t, theme, scale, px, py)
     }
     for (const s of input.synthetics) {
       this.drawGroundSymbol(
@@ -74,6 +73,7 @@ export class OverlayRenderer {
           salience: 0.35,
           hue: [1 / 3, 1 / 3, 1 / 3] as const,
         },
+        theme,
         scale,
         px,
         py,
@@ -81,7 +81,7 @@ export class OverlayRenderer {
       )
     }
     for (const t of input.tiles) {
-      if (t.role === 'load' && t.load) this.drawLoadArrow(t, input.phase, scale, px, py)
+      if (t.role === 'load' && t.load) this.drawLoadArrow(t, theme, input.phase, scale, px, py)
     }
 
     const hov = input.tiles.find((t) => t.answerId === input.hovered)
@@ -92,7 +92,7 @@ export class OverlayRenderer {
 
   private drawScaffolding(
     input: OverlayInput,
-    theme: (typeof THEMES)['ink'],
+    theme: ThemeColors,
     scale: number,
     px: (x: number) => number,
     py: (y: number) => number,
@@ -102,14 +102,14 @@ export class OverlayRenderer {
 
     // Concentric immutability rings, labelled at the extremes so the radial axis reads.
     ctx.strokeStyle = theme.dimHex
-    ctx.globalAlpha = 0.18
+    ctx.globalAlpha = theme.guide.ring
     ctx.lineWidth = Math.max(1, scale * 0.002)
     for (const frac of [0.25, 0.5, 0.75]) {
       ctx.beginPath()
       ctx.arc(px(0), py(0), R * frac * scale, 0, Math.PI * 2)
       ctx.stroke()
     }
-    ctx.globalAlpha = 0.35
+    ctx.globalAlpha = theme.guide.rim
     ctx.beginPath()
     ctx.arc(px(0), py(0), R * scale, 0, Math.PI * 2)
     ctx.stroke()
@@ -121,15 +121,15 @@ export class OverlayRenderer {
       const centre = SECTOR_CENTER_DEG[cats[k]!]
       const a0 = ((centre - 60) * Math.PI) / 180
       const a1 = ((centre + 60) * Math.PI) / 180
-      ctx.strokeStyle = CATEGORY_CSS[k]!
-      ctx.globalAlpha = 0.32
+      ctx.strokeStyle = theme.catCss[k]!
+      ctx.globalAlpha = theme.guide.arc
       ctx.beginPath()
       // Canvas angles run clockwise with y down, so negate.
       ctx.arc(px(0), py(0), Math.min(0.985, R * 1.045) * scale, -a1, -a0)
       ctx.stroke()
     }
 
-    ctx.globalAlpha = 0.14
+    ctx.globalAlpha = theme.guide.divider
     ctx.strokeStyle = theme.dimHex
     ctx.lineWidth = Math.max(1, scale * 0.002)
     for (const deg of [0, 120, 240]) {
@@ -141,7 +141,7 @@ export class OverlayRenderer {
     }
 
     // Category labels, set along the sector centres.
-    ctx.globalAlpha = 0.85
+    ctx.globalAlpha = theme.guide.label
     ctx.font = `${Math.max(9, Math.round(scale * 0.048))}px "Segoe UI", system-ui, sans-serif`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
@@ -156,14 +156,14 @@ export class OverlayRenderer {
       // A centred label at 180 deg would extend past x = -1 and be clipped mid-word,
       // so anchor each label on the side that keeps it inside the box.
       ctx.textAlign = lx < -0.5 ? 'left' : lx > 0.5 ? 'right' : 'center'
-      ctx.fillStyle = CATEGORY_CSS[k]!
+      ctx.fillStyle = theme.catCss[k]!
       ctx.globalAlpha = 0.75
       ctx.fillText(CATEGORY_LABEL[cats[k]!].toUpperCase(), px(lx), py(ly))
     }
     ctx.textAlign = 'left'
 
     // The radial axis legend.
-    ctx.globalAlpha = 0.5
+    ctx.globalAlpha = theme.guide.legend
     ctx.fillStyle = theme.dimHex
     ctx.font = `${Math.max(8, Math.round(scale * 0.036))}px "Segoe UI", system-ui, sans-serif`
     ctx.textAlign = 'left'
@@ -178,6 +178,7 @@ export class OverlayRenderer {
    */
   private drawGroundSymbol(
     t: Pick<PlacedTile, 'thetaDeg' | 'x' | 'y' | 'salience' | 'hue'>,
+    theme: ThemeColors,
     scale: number,
     px: (x: number) => number,
     py: (y: number) => number,
@@ -193,8 +194,8 @@ export class OverlayRenderer {
     ctx.translate(x, y)
     // Canvas y is down, so the outward radial direction is (cos a, -sin a).
     ctx.rotate(-a)
-    ctx.fillStyle = hueCss(t)
-    ctx.strokeStyle = hueCss(t)
+    ctx.fillStyle = hueCss(t, theme)
+    ctx.strokeStyle = hueCss(t, theme)
     ctx.lineWidth = Math.max(1, scale * 0.0035)
 
     ctx.beginPath()
@@ -226,6 +227,7 @@ export class OverlayRenderer {
 
   private drawLoadArrow(
     t: PlacedTile,
+    theme: ThemeColors,
     phase: number,
     scale: number,
     px: (x: number) => number,
@@ -249,8 +251,8 @@ export class OverlayRenderer {
     const y1 = y0 - uy * len
 
     ctx.save()
-    ctx.strokeStyle = hueCss(t)
-    ctx.fillStyle = hueCss(t)
+    ctx.strokeStyle = hueCss(t, theme)
+    ctx.fillStyle = hueCss(t, theme)
     ctx.globalAlpha = 0.9
     ctx.lineWidth = Math.max(1.2, scale * 0.005)
     ctx.beginPath()
@@ -276,7 +278,7 @@ export class OverlayRenderer {
 
   private drawHoverRing(
     t: PlacedTile,
-    theme: (typeof THEMES)['ink'],
+    theme: ThemeColors,
     scale: number,
     px: (x: number) => number,
     py: (y: number) => number,
@@ -293,16 +295,20 @@ export class OverlayRenderer {
   }
 }
 
-/** The tile's own hue as a CSS colour, for its overlay marks. */
-function hueCss(t: Pick<PlacedTile, 'hue'>): string {
+/**
+ * The tile's own hue as a CSS colour, for its overlay marks.
+ *
+ * Mixes from the ACTIVE theme's inks. It previously carried a private copy of the ink
+ * palette, so on paper every ground symbol and load arrow would have been drawn in a
+ * colour the mosaic itself never renders.
+ */
+function hueCss(t: Pick<PlacedTile, 'hue'>, theme: ThemeColors): string {
   const [hr, hg, hb] = t.hue
-  const mix = (i: number): number => {
-    const c = [
-      [0xe5, 0x48, 0x4d],
-      [0x46, 0xa7, 0x58],
-      [0x5b, 0x6e, 0xe8],
-    ]
-    return Math.round(hr * c[0]![i]! + hg * c[1]![i]! + hb * c[2]![i]!)
-  }
+  const c = theme.catCss.map((hex) => {
+    const h = hex.replace('#', '')
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+  })
+  const mix = (i: number): number =>
+    Math.round(hr * c[0]![i]! + hg * c[1]![i]! + hb * c[2]![i]!)
   return `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`
 }

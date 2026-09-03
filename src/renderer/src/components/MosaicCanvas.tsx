@@ -223,6 +223,17 @@ export default function MosaicCanvas(): JSX.Element {
     const resize = (): void => {
       if (!grid) return
       const rect = wrap.getBoundingClientRect()
+      /**
+       * Bail on a degenerate box.
+       *
+       * The ResizeObserver watches the wrapper that App sets to `display: none` when the
+       * user steps out to the splash or the quiz, and a hidden element reports a 0x0
+       * content rect. Without this guard that collapses the backing store to one device
+       * pixel per cell AND sets seedDirty, which aborts any run in flight -- exactly
+       * what keeping the studio mounted was supposed to prevent. The observer fires
+       * again with the real box on return, and the loop clears sizeDirty either way.
+       */
+      if (rect.width < 1 || rect.height < 1) return
       const dpr = window.devicePixelRatio || 1
       const { drawPx, cssPx } = snapToCells(rect.width, rect.height, grid.n, dpr)
       for (const c of [fieldCanvas, overlayCanvas]) {
@@ -267,8 +278,15 @@ export default function MosaicCanvas(): JSX.Element {
         }
       }
 
-      // Solver output -> pixels. No setState anywhere on this path.
-      if (session.fieldDirty && session.latestFrame && derived) {
+      /**
+       * Solver output -> pixels. No setState anywhere on this path.
+       *
+       * Gated on showingSolverOutput because abort() is a postMessage: the worker can
+       * already have a frame in flight when the profile is invalidated. Ungated, that
+       * straggler repaints the stale optimized field over the freshly drawn seed, and
+       * nothing marks the canvas dirty again, so it stays wrong until the next edit.
+       */
+      if (showingSolverOutput && session.fieldDirty && session.latestFrame && derived) {
         renderer.draw(
           {
             n: derived.fields.grid.n,
@@ -408,7 +426,7 @@ function StatusStrip({
         </span>
       </div>
       {readout.repairs.map((r) => (
-        <div key={r} style={{ marginTop: 4, color: '#d9a441' }}>
+        <div key={r} style={{ marginTop: 4, color: 'var(--warn)' }}>
           {r}
         </div>
       ))}

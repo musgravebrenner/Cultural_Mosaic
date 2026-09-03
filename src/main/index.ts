@@ -47,6 +47,10 @@ function createWindow(): void {
       const win = mainWindow
       if (!win) return
       setTimeout(() => {
+        const th = process.env['MOSAIC_THEME']
+          ? "window.__mosaic.store.getState().setRender({theme:'"
+            + process.env['MOSAIC_THEME'] + "'});"
+          : ''
         const vf = process.env['MOSAIC_VF']
           ? "window.__mosaic.store.getState().setSolver({volumeFraction:" + process.env['MOSAIC_VF'] + "});"
           : ''
@@ -75,8 +79,8 @@ function createWindow(): void {
               : screen === 'quiz'
               ? 'window.__mosaic.store.getState().startQuiz(true); true'
               : screen === 'flow'
-                ? flow
-                : "window.__mosaic.store.getState().setMode('" + screen + "'); true"
+                ? th + flow
+                : th + "window.__mosaic.store.getState().setMode('" + screen + "'); true"
           void win.webContents
             .executeJavaScript(nav)
             .then(() => new Promise((r) => setTimeout(r, screen === 'flow' ? 12000 : screen === 'seed' ? 1500 : 700)))
@@ -96,10 +100,10 @@ function createWindow(): void {
         }
 
         const script = process.env['MOSAIC_RUN']
-          ? "window.__mosaic.store.getState().loadSample();" + vf
+          ? th + "window.__mosaic.store.getState().loadSample();" + vf
             + "setTimeout(function(){window.dispatchEvent(new CustomEvent('mosaic:run',"
             + "{detail:{iterations:" + process.env['MOSAIC_RUN'] + "}}));},600); true"
-          : 'window.__mosaic.store.getState().loadSample(); true'
+          : th + 'window.__mosaic.store.getState().loadSample(); true'
         void win.webContents
           .executeJavaScript(script)
           .then(

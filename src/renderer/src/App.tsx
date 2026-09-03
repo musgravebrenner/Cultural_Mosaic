@@ -50,12 +50,12 @@ export default function App(): JSX.Element {
         </div>
 
         {mode === 'splash' && (
-          <div style={{ position: 'absolute', inset: 0, background: 'var(--ink-bg)' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'var(--bg)' }}>
             <Splash />
           </div>
         )}
         {mode === 'quiz' && (
-          <div style={{ position: 'absolute', inset: 0, background: 'var(--ink-bg)' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'var(--bg)' }}>
             <Quiz />
           </div>
         )}
@@ -75,8 +75,8 @@ function QuizBar(): JSX.Element {
         alignItems: 'center',
         gap: 12,
         padding: '7px 12px',
-        borderBottom: '1px solid var(--ink-border)',
-        background: 'var(--ink-panel)',
+        borderBottom: '1px solid var(--border)',
+        background: 'var(--panel)',
         flex: '0 0 auto',
         fontSize: 12,
       }}
@@ -87,7 +87,7 @@ function QuizBar(): JSX.Element {
           background: 'none',
           border: 'none',
           padding: 0,
-          color: 'var(--ink-text-dim)',
+          color: 'var(--text-dim)',
           cursor: 'pointer',
           font: 'inherit',
         }}
@@ -95,7 +95,7 @@ function QuizBar(): JSX.Element {
         &larr; Cultural Mosaic
       </button>
       <span style={{ flex: 1 }} />
-      <span style={{ color: 'var(--ink-text-dim)' }}>
+      <span style={{ color: 'var(--text-dim)' }}>
         {answered} of {QUIZ_LENGTH} answered &middot; saved automatically
       </span>
     </div>
