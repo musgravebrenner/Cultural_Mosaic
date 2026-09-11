@@ -61,23 +61,13 @@ const MAX_LOADS = 20
 const PIN_RADIUS_SIGMAS = 1.2
 const PASSIVE_RADIUS_SIGMAS = 1.5
 /**
- * Salience at or above which a MASS tile's own footprint is guaranteed solid,
- * regardless of the optimizer's opinion of it.
+ * Smallest guaranteed core, as a fraction of a tile's own half-width.
  *
- * `w`'s salience floor (see layout/fields.ts) tried to earn this the "honest" way, by
- * rescaling BESO's sensitivity number -- and provably cannot: sensitivity is
- * `w * strain-energy`, and a tile whose lattice position simply carries no measured
- * stress has strain energy at or near zero, so no finite w moves it. A Core identity
- * (this app's own maximum conviction) that lands somewhere structurally irrelevant
- * would otherwise vanish exactly as completely as a Dormant one -- which is the
- * opposite of what this app claims about decisively held identities. This is the
- * unconditional version: the same `passive` solid-forcing already used for every
- * anchor and load patch, applied to a Core tile's own footprint and nothing more.
- * Scoped to Core only (not Notable/Minor) and to `role === 'mass'` only (anchors and
- * loads already get this from their own pin/load patches) so the guarantee stays rare
- * enough not to crowd out the volume budget the rest of the structure competes over.
+ * Only binds for Minor answers: the guarantee is otherwise just `salience` (see
+ * `protectedHalfWidth`), and a third of a small tile's width rounds to nothing on the
+ * element grid, which would be a guarantee that quietly guarantees nothing.
  */
-const CORE_PROTECTION_SALIENCE = 0.99
+const MIN_PROTECTED_FRACTION = 0.35
 
 /** Fraction of total load magnitude that authored conflicts may consume. */
 const CONFLICT_LOAD_CAP = 0.25
@@ -559,21 +549,22 @@ export function buildBoundary(
   for (const t of loads) if (roles.get(t.answerId) === undefined) roles.set(t.answerId, 'load')
 
   /**
-   * Guarantee, not a nudge: a Core-conviction MASS tile's own footprint (its exact
-   * square, the same test `buildFields` stamps it with -- not the padded circle
-   * `solidRegion` uses for a pin or load patch, since there is no point-load
-   * singularity here to guard against) is forced solid. See `CORE_PROTECTION_SALIENCE`.
+   * Force the central square of a tile solid -- the same Chebyshev test
+   * `buildFields` stamps the tile itself with, at a reduced half-width, so the kept
+   * core sits concentric inside the tile's own body rather than the padded circle
+   * `solidRegion` uses for a pin or load patch (there is no point-load singularity
+   * here to guard against).
    */
-  const protectCoreMass = (x: number, y: number, sigma: number): void => {
-    const ex0 = Math.max(0, Math.floor((x - sigma + 1) / h - 0.5))
-    const ex1 = Math.min(n - 1, Math.ceil((x + sigma + 1) / h - 0.5))
-    const ey0 = Math.max(0, Math.floor((y - sigma + 1) / h - 0.5))
-    const ey1 = Math.min(n - 1, Math.ceil((y + sigma + 1) / h - 0.5))
+  const protectSquare = (x: number, y: number, half: number): void => {
+    const ex0 = Math.max(0, Math.floor((x - half + 1) / h - 0.5))
+    const ex1 = Math.min(n - 1, Math.ceil((x + half + 1) / h - 0.5))
+    const ey0 = Math.max(0, Math.floor((y - half + 1) / h - 0.5))
+    const ey1 = Math.min(n - 1, Math.ceil((y + half + 1) / h - 0.5))
     for (let ey = ey0; ey <= ey1; ey++) {
       for (let ex = ex0; ex <= ex1; ex++) {
         const e = ey * n + ex
         if (!grid.mask[e]) continue
-        if (Math.abs(grid.cx[e]! - x) > sigma || Math.abs(grid.cy[e]! - y) > sigma) continue
+        if (Math.abs(grid.cx[e]! - x) > half || Math.abs(grid.cy[e]! - y) > half) continue
         passive.add(e)
       }
     }
@@ -581,12 +572,10 @@ export function buildBoundary(
 
   /**
    * A forced-solid patch that does not physically TOUCH the rest of the structure is
-   * exactly what the FEA connectivity guard exists to catch (see connectivity.ts):
-   * a solid island with no anchored neighbour gets its DOFs pinned to zero and
-   * excluded from compliance entirely, which renders as full colour while
-   * contributing nothing structurally -- present in the picture, absent from the
-   * truss. So the guarantee has to cover the PATH, not just the tile: a corridor of
-   * forced-solid cells joining it straight to its nearest anchor.
+   * exactly what the FEA connectivity guard catches (see connectivity.ts): a solid
+   * island with no anchored neighbour has its DOFs pinned to zero and is excluded
+   * from compliance entirely -- present in the picture, absent from the truss. So
+   * the guarantee has to cover the PATH, not just the tile.
    *
    * Sampled every half-element along the segment and stamped with a small radius
    * rather than a single-cell-wide Bresenham line, so the corridor is robustly
@@ -594,24 +583,13 @@ export function buildBoundary(
    * through a Q4 mesh and the connectivity pass treats that exactly like a gap.
    */
   const CORRIDOR_RADIUS = 1.1 * h
-  const bridgeToNearestAnchor = (x: number, y: number): void => {
-    let bestX = 0
-    let bestY = 0
-    let bestD = Infinity
-    for (const a of [...anchors, ...synthetics]) {
-      const d = Math.hypot(a.x - x, a.y - y)
-      if (d < bestD) {
-        bestD = d
-        bestX = a.x
-        bestY = a.y
-      }
-    }
-    if (!Number.isFinite(bestD)) return
-    const steps = Math.max(1, Math.ceil(bestD / (0.5 * h)))
+  const corridor = (x0: number, y0: number, x1: number, y1: number): void => {
+    const dist = Math.hypot(x1 - x0, y1 - y0)
+    const steps = Math.max(1, Math.ceil(dist / (0.5 * h)))
     for (let s = 0; s <= steps; s++) {
-      const t = s / steps
-      const px = x + (bestX - x) * t
-      const py = y + (bestY - y) * t
+      const f = s / steps
+      const px = x0 + (x1 - x0) * f
+      const py = y0 + (y1 - y0) * f
       const ex0 = Math.max(0, Math.floor((px - CORRIDOR_RADIUS + 1) / h - 0.5))
       const ex1 = Math.min(n - 1, Math.ceil((px + CORRIDOR_RADIUS + 1) / h - 0.5))
       const ey0 = Math.max(0, Math.floor((py - CORRIDOR_RADIUS + 1) / h - 0.5))
@@ -626,11 +604,71 @@ export function buildBoundary(
     }
   }
 
-  for (const t of tiles) {
-    if (roles.get(t.answerId) === 'mass' && t.salience >= CORE_PROTECTION_SALIENCE) {
-      protectCoreMass(t.x, t.y, t.sigma)
-      bridgeToNearestAnchor(t.x, t.y)
+  /**
+   * NOTHING A PERSON ANSWERED IS ALLOWED TO VANISH COMPLETELY.
+   *
+   * Which is not the same as "nothing erodes". Erosion is the whole point of the
+   * solve and most of a tile can still go; what cannot happen is an answer being
+   * rubbed out to bare background, because the artwork then silently misreports the
+   * profile -- a viewer counts the tiles and comes up short, and the person who
+   * answered sees an identity they named simply not there. That is a different
+   * failure from "this identity turned out not to be load-bearing", which is
+   * legitimately expressed by keeping only a small core of it.
+   *
+   * So every mass tile keeps a CONCENTRIC CORE of itself, and how much is exactly
+   * its own conviction: a Core answer keeps its whole body, a Notable one about two
+   * thirds of its width (~44% of its area), a Minor one a little over a third
+   * (~12%). That is the app's own promise -- "strongly-held identities keep more of
+   * themselves" -- rendered literally, and the remaining budget still belongs to the
+   * physics, which decides how much MORE than the guaranteed core each tile keeps
+   * and what webbing grows between them. Anchors and loads need no entry here: their
+   * pin and load patches are already forced solid.
+   *
+   * The floor under Minor matters: `salience` alone would give a Minor answer a core
+   * a third of its width, which at a small tile size rounds to nothing on the grid --
+   * a guarantee that quietly fails to guarantee anything.
+   */
+  const protectedHalfWidth = (t: PlacedTile): number =>
+    t.sigma * Math.max(MIN_PROTECTED_FRACTION, Math.min(1, t.salience))
+
+  const protectedTiles = tiles.filter((t) => roles.get(t.answerId) === 'mass')
+  for (const t of protectedTiles) protectSquare(t.x, t.y, protectedHalfWidth(t))
+
+  /**
+   * Join every protected core into the anchored structure, nearest-first (Prim, not
+   * "everyone runs their own line to the nearest anchor").
+   *
+   * Growing the connected set one nearest tile at a time means a tile usually only
+   * has to cross the one-element gutter to a neighbour that is already connected,
+   * instead of driving a long private corridor across the disc to a rim pin. Same
+   * guarantee, a fraction of the forced material -- which matters, because every
+   * cell spent here is a cell the optimizer no longer gets to decide about.
+   */
+  const connected: { x: number; y: number }[] = [
+    ...anchors.map((a) => ({ x: a.x, y: a.y })),
+    ...synthetics.map((s) => ({ x: s.x, y: s.y })),
+  ]
+  const pending = protectedTiles.map((t) => ({ x: t.x, y: t.y }))
+  while (pending.length > 0 && connected.length > 0) {
+    let bestPending = -1
+    let bestConnected = -1
+    let bestDist = Infinity
+    for (let i = 0; i < pending.length; i++) {
+      for (let j = 0; j < connected.length; j++) {
+        const d = Math.hypot(pending[i]!.x - connected[j]!.x, pending[i]!.y - connected[j]!.y)
+        if (d < bestDist) {
+          bestDist = d
+          bestPending = i
+          bestConnected = j
+        }
+      }
     }
+    if (bestPending < 0) break
+    const tile = pending[bestPending]!
+    const target = connected[bestConnected]!
+    corridor(tile.x, tile.y, target.x, target.y)
+    connected.push(tile)
+    pending.splice(bestPending, 1)
   }
 
   return {
