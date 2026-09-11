@@ -127,6 +127,50 @@ becomes a load path; where they conflict, it is weak and erodes into void. That 
 Proposition 1 rendered as structure, and it falls out of minimizing compliance rather than
 being imposed.
 
+## Questions
+
+### Regular Questions (21)
+
+| ID | Question | Category | Facet |
+|---|---|---|---|
+| D-AGE-01 | Shaped by my generation's era ↔ Out of step with my generation | Demographic | Age |
+| D-AGE-05 | Age earns standing ↔ Merit earns standing | Demographic | Age |
+| D-ETH-01 | Ancestral heritage is central to me ↔ Heritage is background, not identity | Demographic | Ethnicity |
+| D-ETH-03 | Keep ancestral customs distinct ↔ Blend customs into one shared life | Demographic | Ethnicity |
+| D-GEN-01 | Gendered expectations shaped my path ↔ Gender has been incidental to my path | Demographic | Gender |
+| D-RAC-02 | I am my relationships (interdependent) ↔ I am my own unit (independent) | Demographic | Race |
+| D-RAC-03 | Difference should be named ↔ Difference should be downplayed | Demographic | Race |
+| G-CLI-01 | Four hard seasons made me ↔ One steady season made me | Geographic | Climate |
+| G-TMP-01 | I am built for cold ↔ I am built for heat | Geographic | Temperature |
+| G-CST-01 | Water is my horizon ↔ Land is my horizon | Geographic | Coastal/Inland |
+| G-URB-01 | Raised where neighbors are close ↔ Raised where neighbors are far | Geographic | Urban/Rural |
+| G-URB-05 | Institutions are near and trusted ↔ Institutions are far and doubted | Geographic | Urban/Rural |
+| G-REG-01 | Where I was born is where I'm from ↔ Where I chose is where I'm from | Geographic | Regional/Country |
+| G-REG-06 | Homeland is a place I can return to ↔ Homeland is a memory | Geographic | Regional/Country |
+| A-FAM-01 | Family is the unit of decision ↔ The individual is the unit of decision | Associative | Family |
+| A-FAM-03 | Family is who I was born to ↔ Family is who I chose | Associative | Family |
+| A-EMP-02 | Loyalty to one organization ↔ Loyalty to my own trajectory | Associative | Employer |
+| A-PRO-01 | My craft is who I am ↔ My craft is what I do | Associative | Profession |
+| A-POL-03 | Decide close to home ↔ Decide at the largest scale | Associative | Politics |
+| A-AVO-02 | Make things ↔ Take things in | Associative | Avocations |
+| A-AVO-04 | Join a club ↔ Go alone | Associative | Avocations |
+
+### Anchor Questions (11)
+
+| ID | Prompt | Options | Category | Facet |
+|---|---|---|---|---|
+| ANCH-D-01 | Assigned sex at birth | Male, Female | Demographic | Gender |
+| ANCH-D-02 | Decade you were born | 1950s, 1960s, 1970s, 1980s, 1990s, 2000s, 2010s | Demographic | Age |
+| ANCH-D-03 | Heritage background | Multiple heritages, One heritage | Demographic | Ethnicity |
+| ANCH-G-01 | Has left their home country | Has left their home country, Has never left their home country | Geographic | Regional/Country |
+| ANCH-G-02 | Has bought a home | Has bought a home, Has never bought a home | Geographic | Urban/Rural |
+| ANCH-G-03 | Has lived both urban and rural | Has lived both urban and rural, Has always lived one or the other | Geographic | Urban/Rural |
+| ANCH-A-01 | Has raised a child | Has raised a child, No child has depended on them | Associative | Life Events |
+| ANCH-A-02 | Citizen of another country | Is a citizen of another country, Is only a citizen of one country | Associative | Standing |
+| ANCH-A-03 | Has broken a bone | Has broken a bone, Has never broken a bone | Associative | Embodied |
+| ANCH-A-04 | Joined a formal religious tradition | Has joined a formal religious tradition, Has not joined a formal religious tradition | Associative | Religion |
+| ANCH-A-05 | Been formally employed | Has been formally employed, Has not been formally employed | Associative | Employer |
+
 ## Layout
 
 ```
