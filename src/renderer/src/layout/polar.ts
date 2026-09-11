@@ -1,4 +1,13 @@
-import type { Cat3, LayoutConfig, PlacedTile, TileAnswer, TileRole, WordPair } from '../domain/types'
+import type {
+  AnchorAnswer,
+  AnchorPair,
+  Cat3,
+  LayoutConfig,
+  PlacedTile,
+  TileAnswer,
+  TileRole,
+  WordPair,
+} from '../domain/types'
 import { LEAN_NOTCHES, STRENGTH_VALUES } from '../domain/types'
 
 /**
@@ -30,17 +39,88 @@ export const DEFAULT_LAYOUT: LayoutConfig = Object.freeze({
   invertAnchors: false,
 })
 
-/** Arc-length jitter budget, in units of R_max. */
-const JITTER_HASH = 0.05
-const JITTER_LEAN = 0.045
-/** Hard cap so a blend can never leave the span of its two parent sectors. */
-const DELTA_THETA_CAP_DEG = 20
 /** Below this purity an item has no categorical direction at all. */
 const PURITY_EPSILON = 0.05
-const RELAX_ITERATIONS = 20
-const RELAX_STRENGTH = 0.6
-/** Separation floor in element widths. */
-const RELAX_MIN_SEP_ELEMS = 2.5
+
+/**
+ * Tile lattice. Each answered question is ONE square tile of uniform size, which is
+ * Chao & Moon's own metaphor: a mosaic is "a composite picture made up of distinct
+ * colored tiles" where "both the overall picture and the multitude of colored tiles are
+ * simultaneously distinguishable". Conviction is carried by colour saturation rather
+ * than by area, so every tile is the same size and each one stays identifiable.
+ *
+ * PACK is the fraction of the disc the lattice cells occupy, and it is really a
+ * FIDELITY dial rather than an aesthetic one. Discrete non-overlapping tiles cannot
+ * cluster the way overlapping Gaussians could, so wherever answers pile up -- and they
+ * do, since 65 of the 79 library pairs are single-category and therefore share one of
+ * only three angles -- some get displaced to a free cell. The tighter the lattice, the
+ * further they travel and the more the theta-is-category reading erodes.
+ *
+ * Measured over the library at N = 11/20/30/40/79 answers, worst angular error against
+ * the true circular mean (over tiles beyond r = 0.3, where angle is legible at all):
+ *
+ *   PACK   occupancy   worst    mean    wrong sector
+ *   0.55     58-85%    109 deg  9-36    3 of 133
+ *   0.45     54-58%     77 deg  8-28    2 of 133
+ *   0.40     41-56%     77 deg  6-26    2 of 133
+ *
+ * 0.40 is where the curve flattens: below it the disc starts reading as empty without
+ * buying further accuracy. Residual error concentrates at 15-20 answers, where the
+ * lattice is coarse AND already crowded; a full profile holds within about 22 deg.
+ *
+ * MIN_PITCH matters more than it looks: a tile narrower than the sensitivity filter
+ * radius (2.2 elements by default) gets erased by the filter before the optimizer can
+ * act on it, and every profile would then produce the same art. At 5 the tile body is
+ * 4 elements, which is about the minimum resolvable member width. It binds only at the
+ * 64 grid with a nearly complete profile, where the lattice runs about 98% full and
+ * placement degrades accordingly -- that combination is why 96 is the default.
+ *
+ * MAX_PITCH caps how bold a sparse profile gets. At 18 a handful of answers had only
+ * nine cells to choose from, which cost 35 deg of angular error and 0.36 of radius on a
+ * two-answer profile; 14 gives 21 cells and drops those to 10 deg and 0.07, while a
+ * 13-element tile is still a bold block against an 82-element disc.
+ */
+const PACK = 0.4
+const MIN_PITCH = 5
+const MAX_PITCH = 14
+/**
+ * Gutter between tiles, as a fraction of the pitch, with a two-element floor.
+ *
+ * It earns its keep three times over: it sits at the connectivity floor, which equals
+ * solidLo, so smoothstep renders it as background and tiles read as discrete with no
+ * border-drawing code at all; it is real weak material in the physics that the optimizer
+ * must decide whether to thicken into a bridge or erode; and it keeps the whole disc one
+ * connected component at iteration 1.
+ *
+ * PROPORTIONAL rather than a single element, and that is what makes webbing possible at
+ * all. At one element the lattice packs tiles edge to edge with a hairline between them,
+ * so the seed is one contiguous slab and -- more importantly -- there is no distance
+ * anywhere for material to span. Compliance-optimal structure only grows struts when
+ * supports and loads are far apart; with every tile touching its neighbours the optimum
+ * is just the tiles with their corners rounded off, which is exactly what the solver
+ * produced. Real space between tiles gives the optimizer something to bridge, so a tile
+ * pulled toward an anchor arrives as a run of chips across a gap instead of merging into
+ * the neighbour it was already touching.
+ */
+const GUTTER_FRACTION = 0.25
+const MIN_GUTTER = 2
+/**
+ * How much more a displaced tile is penalized for arc-length error than for radial
+ * error, when choosing among free cells.
+ *
+ * Deliberately asymmetric, because the two coordinates are not equally load-bearing.
+ * Angle is the category reading and it is what a viewer actually decodes from the
+ * picture; radius is immutability, and the physics reads immutability from `role`, which
+ * comes from the trait itself and does not depend on where the tile lands -- so a tile
+ * pushed outward still anchors correctly, while a tile pushed sideways lies about its
+ * category.
+ *
+ * Measured over the library at 30 to 79 answers, mean angular error against weight:
+ * 1.0 gives 10-16 deg, 1.5 gives 7-12, 3.0 gives 5-12 but costs 0.10-0.14 more worst
+ * radial displacement and starts collapsing the three immutability bands into each
+ * other. 1.5 takes most of the angular gain for none of the radial cost.
+ */
+const ANGULAR_WEIGHT = 1.5
 
 /** Immutability band thresholds. See boundary.ts for the final anchor/load selection. */
 export const M_ANCHOR = 0.75
@@ -175,22 +255,37 @@ export function radiusFraction(immutability: number, purity: number, cfg: Layout
 }
 
 /**
- * Deposit footprint. Both factors are semantic rather than tuning:
- *  - (1 + 0.8 * beta): a BALANCED answer spreads (the wide, soft merged/bicultural
- *    morphology); a COMMITTED answer concentrates into a tight, saturated node.
- *  - (1 + 0.4 * (1 - m)): immutable traits are crisp and hard-edged; fluid traits are
- *    diffuse clouds. Mechanically apt too -- a pinned boundary condition should be
- *    well-localized, a hobby should not be.
+ * Tile geometry for a given answer count.
  *
- * The 1.5h floor is a real bug guard, not a nicety: below it a deposit can fall between
- * grid nodes and sample to nearly zero, so an answered pair silently contributes
- * nothing. That class of bug is hard to notice because the art still looks plausible.
+ * Adaptive but UNIFORM: every tile is the same size as every other, and that size comes
+ * from how many questions were answered, so the composition reads well at any profile
+ * size in the same disc. At N=96 that is roughly 16 elements per side at a dozen
+ * answers, 9 at forty, 6 at all seventy-nine -- bold blocks that grade into a fine
+ * mosaic. The trade-off is that adding an answer can resize every tile, so the artwork
+ * shifts while it is being built; it settles once you stop answering.
  */
-export function sigmaFor(polarity: number, immutability: number, cfg: LayoutConfig): number {
-  const beta = 1 - polarity
+export interface TileGeometry {
+  /** Lattice spacing in elements, tile body plus one gutter. */
+  readonly pitch: number
+  /** Tile body in elements. */
+  readonly side: number
+  /** Lattice spacing in normalized units. */
+  readonly pitchN: number
+  /** Half the tile body in normalized units -- the `sigma` a PlacedTile reports. */
+  readonly halfN: number
+}
+
+export function tileGeometry(nAnswers: number, cfg: LayoutConfig): TileGeometry {
   const h = 2 / cfg.gridSize
-  const raw = cfg.sigmaBase * (1 + 0.8 * beta) * (1 + 0.4 * (1 - immutability))
-  return Math.max(1.5 * h, raw)
+  const radiusElems = cfg.rimRadius * (cfg.gridSize / 2)
+  const discArea = Math.PI * radiusElems * radiusElems
+  const ideal = nAnswers > 0 ? Math.sqrt((discArea * PACK) / nAnswers) : MAX_PITCH
+  const pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, Math.round(ideal)))
+  const gutter = Math.max(MIN_GUTTER, Math.round(pitch * GUTTER_FRACTION))
+  // The filter-radius floor still wins: a tile thinner than the sensitivity filter is
+  // erased before the optimizer can act on it.
+  const side = Math.max(3, pitch - gutter)
+  return { pitch, side, pitchN: pitch * h, halfN: (side * h) / 2 }
 }
 
 function bandRole(immutability: number, invert: boolean): TileRole {
@@ -209,181 +304,266 @@ export interface PlacementInput {
   readonly answers: readonly TileAnswer[]
   /** Every pair referenced by `answers`, library and custom alike. */
   readonly pairs: ReadonlyMap<string, WordPair>
+  /** Anchor answers, if any -- optional so every existing regular-only caller still compiles. */
+  readonly anchorAnswers?: readonly AnchorAnswer[]
+  /** Every anchor referenced by `anchorAnswers`. */
+  readonly anchors?: ReadonlyMap<string, AnchorPair>
   readonly layout: LayoutConfig
 }
 
+interface Draft {
+  readonly answerId: string
+  readonly pairId: string
+  readonly label: string
+  readonly activePole: string
+  readonly lean: number
+  readonly salience: number
+  readonly immutability: number
+  readonly hue: Cat3
+  readonly purity: number
+  /** Ideal position from the polar semantics, before snapping. */
+  readonly idealX: number
+  readonly idealY: number
+  readonly idealR: number
+  readonly idealDeg: number
+  col: number
+  row: number
+}
+
+/** A category-neutral item has no true angle; see the comment at its call site. */
+function idealAngleRad(hue: Cat3, id: string): number {
+  const { thetaDeg, degenerate } = circularMean(hue)
+  return degenerate ? hashUnit(id) * 2 * Math.PI : (thetaDeg * Math.PI) / 180
+}
+
+function draftFromAnswer(a: TileAnswer, pair: WordPair, layout: LayoutConfig, centreLimit: number): Draft {
+  const lean = LEAN_NOTCHES[a.leanIndex] ?? 0
+  const salience = STRENGTH_VALUES[a.strength] ?? 0
+  const immutability = a.immutabilityOverride ?? pair.immutability
+
+  const hue = effectiveHue(pair, lean)
+  const { purity } = circularMean(hue)
+  const rFrac = radiusFraction(immutability, purity, layout)
+
+  // atan2(0, 0) returns 0 in JavaScript rather than NaN, so a perfectly integrated
+  // identity would otherwise be silently placed at 0 deg -- the Associative/
+  // Demographic seam -- and nothing would look broken. Falling back to a stable hash
+  // is harmless because the purity factor has already pulled it near the hub, where
+  // angular position barely affects geometry.
+  const rad = idealAngleRad(hue, pair.id)
+  const r = Math.min(rFrac * layout.rimRadius, centreLimit)
+
+  return {
+    answerId: a.answerId,
+    pairId: a.pairId,
+    label: `${pair.poleA} ↔ ${pair.poleB}`,
+    activePole: poleLabel(pair, lean),
+    lean,
+    salience,
+    immutability,
+    hue,
+    purity,
+    idealX: r * Math.cos(rad),
+    idealY: r * Math.sin(rad),
+    idealR: r,
+    idealDeg: (((rad * DEG) % 360) + 360) % 360,
+    col: 0,
+    row: 0,
+  }
+}
+
 /**
- * Closed-form placement, then a deterministic relaxation pass.
+ * An anchor, once answered, is always full conviction -- there is no partial-anchor
+ * state, matching "you either have or haven't." `lean` is reported as 1 (fully
+ * committed) purely so `polarity` (`|lean|`) reads as maximal, the same way a Core
+ * regular answer's does; an anchor has no bipolar direction to report.
+ */
+function draftFromAnchorAnswer(
+  a: AnchorAnswer,
+  anchor: AnchorPair,
+  layout: LayoutConfig,
+  centreLimit: number,
+): Draft | null {
+  const option = anchor.options.find((o) => o.id === a.optionId)
+  if (!option) return null
+
+  const hue = normalizeMix(option.hue)
+  const { purity } = circularMean(hue)
+  const rFrac = radiusFraction(anchor.immutability, purity, layout)
+  const rad = idealAngleRad(hue, anchor.id)
+  const r = Math.min(rFrac * layout.rimRadius, centreLimit)
+
+  return {
+    answerId: a.answerId,
+    pairId: a.anchorId,
+    label: anchor.prompt,
+    activePole: option.label,
+    lean: 1,
+    salience: STRENGTH_VALUES[3] ?? 1,
+    immutability: anchor.immutability,
+    hue,
+    purity,
+    idealX: r * Math.cos(rad),
+    idealY: r * Math.sin(rad),
+    idealR: r,
+    idealDeg: (((rad * DEG) % 360) + 360) % 360,
+    col: 0,
+    row: 0,
+  }
+}
+
+/**
+ * Closed-form polar placement, then a deterministic claim onto the tile lattice.
  *
  * Answers with strength 0 (Dormant) and answers referencing an unknown pair are skipped:
  * Dormant is a real kept state that contributes nothing, which is distinct from an
  * unanswered pair (simply absent from `answers`) and from a balanced answer at full
- * strength (the most diffuse STRONG material in the model).
+ * strength (the most diffuse STRONG material in the model). Anchor answers have no
+ * Dormant state -- they are always full conviction once made -- so they are never
+ * filtered on strength, only on whether they resolve to a real anchor and option.
  */
 export function placeAnswers(input: PlacementInput): PlacedTile[] {
   const { answers, pairs, layout } = input
+  const anchorAnswers = input.anchorAnswers ?? []
+  const anchors = input.anchors ?? new Map<string, AnchorPair>()
 
-  // Sort by id so the relaxation below is order-independent. JS Map and object
-  // iteration order will bite you here if you rely on insertion order.
+  // Sort by id so the output order -- and therefore the provenance indices the renderer
+  // and hit-testing read -- never depends on the order answers arrived in. JS Map and
+  // object iteration order will bite you here if you rely on insertion order.
   const active = answers
     .filter((a) => (STRENGTH_VALUES[a.strength] ?? 0) > 0 && pairs.has(a.pairId))
     .slice()
     .sort((p, q) => (p.pairId < q.pairId ? -1 : p.pairId > q.pairId ? 1 : 0))
 
-  const capRad = (DELTA_THETA_CAP_DEG * Math.PI) / 180
-  const fMin = layout.minRadius / layout.rimRadius
+  const activeAnchors = anchorAnswers
+    .filter((a) => anchors.has(a.anchorId))
+    .slice()
+    .sort((p, q) => (p.anchorId < q.anchorId ? -1 : p.anchorId > q.anchorId ? 1 : 0))
 
-  interface Draft {
-    tile: Omit<PlacedTile, 'thetaDeg' | 'x' | 'y'>
-    rFrac: number
-    thetaRad: number
-    /** The un-jittered circular mean, so the sector cap can be re-enforced after relaxation. */
-    baseRad: number
-    capped: boolean
-  }
+  const geom = tileGeometry(active.length + activeAnchors.length, layout)
+  // A tile must fit entirely inside the disc, so its CENTRE is bounded by the rim less
+  // half a tile. Otherwise rim tiles get clipped by the domain mask and read as
+  // fragments rather than as answers.
+  const centreLimit = Math.max(geom.halfN, layout.rimRadius - geom.halfN)
 
-  const drafts: Draft[] = active.map((a) => {
-    const pair = pairs.get(a.pairId)!
-    const lean = LEAN_NOTCHES[a.leanIndex] ?? 0
-    const salience = STRENGTH_VALUES[a.strength] ?? 0
-    const immutability = a.immutabilityOverride ?? pair.immutability
-
-    const hue = effectiveHue(pair, lean)
-    const { thetaDeg: meanDeg, purity, degenerate } = circularMean(hue)
-    const rFrac = radiusFraction(immutability, purity, layout)
-
-    // A category-neutral item has no true angle, so fall back to a stable hash. This is
-    // harmless because the purity factor has already pulled it near the hub, where
-    // angular position barely affects geometry. The important part is that this case is
-    // handled AT ALL: atan2(0, 0) returns 0 in JavaScript rather than NaN, so a
-    // perfectly integrated identity would otherwise be silently placed at 0 deg -- the
-    // Associative/Demographic seam -- and nothing would look broken.
-    const baseRad = degenerate
-      ? hashUnit(pair.id) * 2 * Math.PI
-      : (meanDeg * Math.PI) / 180
-
-    // Jitter in ARC LENGTH, not angle. Arc length is r*dTheta, so a fixed dTheta would
-    // give generous spacing at the rim and a dense knot at the hub -- exactly backwards,
-    // since the core is where the fluid Avocation and Employer items pile up.
-    const arc = JITTER_HASH * (2 * hashUnit(pair.id) - 1) + JITTER_LEAN * lean
-    const dTheta = Math.max(-capRad, Math.min(capRad, arc / Math.max(rFrac, fMin)))
-
-    const polarity = Math.abs(lean)
-    return {
-      rFrac,
-      thetaRad: baseRad + dTheta,
-      baseRad,
-      // A category-neutral item has no sector to stay inside, so it is exempt from the
-      // cap and free to be pushed anywhere around the hub.
-      capped: !degenerate,
-      tile: {
-        answerId: a.answerId,
-        pairId: a.pairId,
-        label: `${pair.poleA} ↔ ${pair.poleB}`,
-        activePole: poleLabel(pair, lean),
-        hue,
-        purity,
-        lean,
-        polarity,
-        salience,
-        immutability,
-        radius: rFrac * layout.rimRadius,
-        sigma: sigmaFor(polarity, immutability, layout) * layout.rimRadius,
-        amplitude: salience,
-        role: bandRole(immutability, layout.invertAnchors),
-      },
-    }
-  })
-
-  relaxAngles(drafts, layout)
+  const drafts: Draft[] = [
+    ...active.map((a) => draftFromAnswer(a, pairs.get(a.pairId)!, layout, centreLimit)),
+    ...activeAnchors
+      .map((a) => draftFromAnchorAnswer(a, anchors.get(a.anchorId)!, layout, centreLimit))
+      .filter((d): d is Draft => d !== null),
+  ]
 
   /**
-   * Re-enforce the sector cap AFTER relaxation.
+   * Claim a lattice cell for each tile: the free cell of least cost, considering every
+   * free cell in the disc.
    *
-   * The cap applied to the jitter above does not survive the relaxation pass, which
-   * moves theta freely to separate coincident items -- so without this, a crowded core
-   * item can be pushed more than 20 deg from its circular mean and drift out of the
-   * span its parent categories cover, destroying the "theta = category" reading the
-   * entire layout depends on.
+   * Discrete non-overlapping tiles cannot cluster the way overlapping Gaussians could,
+   * and answers DO cluster -- 65 of the 79 library pairs are single-category, so they
+   * share one of only three angles, and the low-immutability traits all want the hub,
+   * where cells are scarcest because their count grows as r^2. So displacement is not an
+   * edge case, it is the normal case, and the only question is which way a displaced tile
+   * gets pushed. That is what the cost function decides.
    *
-   * The trade-off is deliberate: the sector guarantee is a semantic invariant, while
-   * the separation target is only a mesh-quality heuristic. So separation yields.
+   * An earlier version searched outward ring by ring and stopped at the first ring
+   * holding a free cell. That looks like the same thing and is not: stopping at the first
+   * ring means a cell one ring further out is never compared, so outer tiles consumed
+   * cheap inner cells and the tiles claimed later were left with only rim cells. It
+   * inverted the layout's central reading -- fluid traits ended up further out than the
+   * anchors (mean radius 0.618 against 0.616 at 20 answers). Scanning all free cells
+   * restores a clean three-band separation (0.651 / 0.452 / 0.299 at a full profile) and
+   * costs about 16k comparisons for the whole library, which is nothing.
+   *
+   * Deterministic by construction: a fixed claim order (pair id), a fixed cell order, and
+   * strict improvement on cost, so ties go to the earliest cell. No RNG anywhere. The
+   * same profile always produces the same artwork, which is what the persistence promise
+   * rests on.
    */
+  const ringLimit = Math.ceil(centreLimit / geom.pitchN)
+  interface Cell {
+    readonly col: number
+    readonly row: number
+    readonly x: number
+    readonly y: number
+    readonly r: number
+    readonly deg: number
+  }
+  const cells: Cell[] = []
+  for (let col = -ringLimit; col <= ringLimit; col++) {
+    for (let row = -ringLimit; row <= ringLimit; row++) {
+      const x = col * geom.pitchN
+      const y = row * geom.pitchN
+      const r = Math.hypot(x, y)
+      if (r > centreLimit) continue
+      cells.push({ col, row, x, y, r, deg: (((Math.atan2(y, x) * DEG) % 360) + 360) % 360 })
+    }
+  }
+  const free = new Uint8Array(cells.length).fill(1)
+
   for (const d of drafts) {
-    if (!d.capped) continue
-    let delta = d.thetaRad - d.baseRad
-    while (delta > Math.PI) delta -= 2 * Math.PI
-    while (delta < -Math.PI) delta += 2 * Math.PI
-    if (delta > capRad) d.thetaRad = d.baseRad + capRad
-    else if (delta < -capRad) d.thetaRad = d.baseRad - capRad
+    let bestIndex = -1
+    let bestCost = Infinity
+    for (let i = 0; i < cells.length; i++) {
+      if (!free[i]) continue
+      const c = cells[i]!
+      let dDeg = Math.abs(c.deg - d.idealDeg)
+      if (dDeg > 180) dDeg = 360 - dDeg
+      // Arc length at the SMALLER of the two radii, so an angular error near the hub
+      // costs almost nothing -- which is right, since a hub tile is barely off-centre in
+      // absolute terms and its category is not readable from its angle anyway.
+      const arc = (Math.min(c.r, d.idealR) * dDeg) / DEG
+      const dRad = c.r - d.idealR
+      const cost = dRad * dRad + ANGULAR_WEIGHT * ANGULAR_WEIGHT * arc * arc
+      if (cost < bestCost) {
+        bestCost = cost
+        bestIndex = i
+      }
+    }
+
+    if (bestIndex < 0) {
+      // More answers than cells -- only reachable at the 64 grid with a nearly complete
+      // profile, or with a great many custom pairs. Fall back to the ideal cell and
+      // accept the overlap rather than dropping the answer: silently losing a tile would
+      // be worse than a crowded one, and buildFields stays valid either way, since the
+      // tile stamped later simply owns the shared cells.
+      d.col = Math.round(d.idealX / geom.pitchN)
+      d.row = Math.round(d.idealY / geom.pitchN)
+      continue
+    }
+    free[bestIndex] = 0
+    d.col = cells[bestIndex]!.col
+    d.row = cells[bestIndex]!.row
   }
 
   return drafts.map((d) => {
-    let deg = (d.thetaRad * DEG) % 360
+    const x = d.col * geom.pitchN
+    const y = d.row * geom.pitchN
+    let deg = (Math.atan2(y, x) * DEG) % 360
     if (deg < 0) deg += 360
-    const R = d.rFrac * layout.rimRadius
+    const polarity = Math.abs(d.lean)
     return {
-      ...d.tile,
+      answerId: d.answerId,
+      pairId: d.pairId,
+      label: d.label,
+      activePole: d.activePole,
+      hue: d.hue,
+      purity: d.purity,
+      lean: d.lean,
+      polarity,
+      salience: d.salience,
+      immutability: d.immutability,
+      // Reported from the SNAPPED position, not the ideal one, so the overlay marks and
+      // the anchor-separation logic in boundary.ts agree with where the tile actually is.
       thetaDeg: deg,
-      x: R * Math.cos(d.thetaRad),
-      y: R * Math.sin(d.thetaRad),
+      radius: Math.hypot(x, y),
+      x,
+      y,
+      tileCol: d.col,
+      tileRow: d.row,
+      // Half the tile body. boundary.ts sizes pin regions and passive-solid patches from
+      // this, so a tile is pinned or made passive over roughly its own footprint.
+      sigma: geom.halfN,
+      amplitude: d.salience,
+      role: bandRole(d.immutability, layout.invertAnchors),
     }
   })
-}
-
-/**
- * Push coincident items apart along the arc, then project each back onto its own circle
- * so only theta moves. Radius is preserved EXACTLY, which keeps the immutability
- * semantics literally true -- a rim pin never drifts inward.
- *
- * Deterministic because the caller sorted by id: a fixed iteration count, a fixed
- * order, and no RNG.
- */
-function relaxAngles(
-  drafts: { rFrac: number; thetaRad: number }[],
-  cfg: LayoutConfig,
-): void {
-  const h = 2 / cfg.gridSize
-  const dMin = RELAX_MIN_SEP_ELEMS * h
-  const n = drafts.length
-  if (n < 2) return
-
-  for (let iter = 0; iter < RELAX_ITERATIONS; iter++) {
-    let moved = false
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const a = drafts[i]!
-        const b = drafts[j]!
-        const ax = a.rFrac * Math.cos(a.thetaRad)
-        const ay = a.rFrac * Math.sin(a.thetaRad)
-        const bx = b.rFrac * Math.cos(b.thetaRad)
-        const by = b.rFrac * Math.sin(b.thetaRad)
-        let dx = bx - ax
-        let dy = by - ay
-        let dist = Math.hypot(dx, dy)
-        if (dist >= dMin) continue
-
-        // Exactly coincident: separate along a fixed axis rather than dividing by zero.
-        if (dist < 1e-12) {
-          dx = 1
-          dy = 0
-          dist = 1e-12
-        }
-        const push = 0.5 * (dMin - dist) * RELAX_STRENGTH
-        const ux = dx / dist
-        const uy = dy / dist
-
-        a.thetaRad = reproject(ax - ux * push, ay - uy * push, a.thetaRad)
-        b.thetaRad = reproject(bx + ux * push, by + uy * push, b.thetaRad)
-        moved = true
-      }
-    }
-    if (!moved) break
-  }
-}
-
-/** Take the angle of a displaced point, keeping the original if it degenerated. */
-function reproject(x: number, y: number, fallback: number): number {
-  if (Math.abs(x) < 1e-12 && Math.abs(y) < 1e-12) return fallback
-  return Math.atan2(y, x)
 }

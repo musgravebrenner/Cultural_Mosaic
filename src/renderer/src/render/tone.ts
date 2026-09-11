@@ -143,8 +143,6 @@ export interface ThemeColors {
    * on its own theme; see hueToLinear for why it cannot simply be the background.
    */
   readonly neutralLinear: Lin3
-  /** Alpha of the eroded-material ghost trace. */
-  readonly ghostAlpha: number
   /** Multiplier on RenderConfig.edgeAccent. */
   readonly edgeScale: number
   /**
@@ -158,8 +156,6 @@ export interface ThemeColors {
     readonly rim: number
     readonly divider: number
     readonly arc: number
-    readonly label: number
-    readonly legend: number
   }
 }
 
@@ -174,9 +170,8 @@ export const THEMES: Readonly<Record<'paper' | 'ink', ThemeColors>> = {
     catLinear: INK_CATEGORY_LINEAR,
     catCss: INK_CATEGORY,
     neutralLinear: srgbHexToLinear('#6f6f78'),
-    ghostAlpha: 0.22,
     edgeScale: 1,
-    guide: { ring: 0.18, rim: 0.35, divider: 0.14, arc: 0.32, label: 0.75, legend: 0.5 },
+    guide: { ring: 0.18, rim: 0.35, divider: 0.14, arc: 0.32 },
   },
   paper: {
     bgLinear: srgbHexToLinear('#f4f1ea'),
@@ -192,13 +187,10 @@ export const THEMES: Readonly<Record<'paper' | 'ink', ThemeColors>> = {
     // A warm graphite, dark enough to read as a drawn mark on cream rather than as a
     // smudge of the paper itself.
     neutralLinear: srgbHexToLinear('#8a8377'),
-    // 0.22 on cream is a third of the perceptual step it is on near-black, because L* is
-    // a cube-root curve: a little light on black is a lot, a little ink on cream is not.
-    ghostAlpha: 0.45,
     // A paper boundary pixel starts from a far higher L*, so the same multiply costs it
     // roughly twice as much lightness.
     edgeScale: 0.6,
-    guide: { ring: 0.55, rim: 0.72, divider: 0.45, arc: 0.75, label: 0.95, legend: 0.85 },
+    guide: { ring: 0.55, rim: 0.72, divider: 0.45, arc: 0.75 },
   },
 }
 

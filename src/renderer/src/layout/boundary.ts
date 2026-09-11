@@ -38,7 +38,7 @@ export interface BoundaryConditions {
    * this the status strip reports more pins than there are visible ground symbols, and
    * the user cannot tell which supports are theirs and which the app added.
    */
-  readonly syntheticAnchors: readonly { x: number; y: number; thetaDeg: number }[]
+  readonly syntheticAnchors: readonly { x: number; y: number; thetaDeg: number; sigma: number }[]
   /** Diagnostics, surfaced in the UI. */
   readonly nAnchors: number
   readonly nLoads: number
@@ -545,7 +545,7 @@ export function buildBoundary(
     loadDofs: Uint32Array.from(loadDofs),
     loadValues: Float32Array.from(loadVals),
     solidPassive: Uint32Array.from([...passive].sort((a, b) => a - b)),
-    syntheticAnchors: synthetics.map((s) => ({ x: s.x, y: s.y, thetaDeg: s.thetaDeg })),
+    syntheticAnchors: synthetics.map((s) => ({ x: s.x, y: s.y, thetaDeg: s.thetaDeg, sigma: s.sigma })),
     nAnchors: anchors.length + synthetics.length,
     nLoads: loadDofs.length / 2,
     anchorExtentDeg: extentDeg(anchorThetas),

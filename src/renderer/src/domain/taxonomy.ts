@@ -31,13 +31,33 @@ export type FacetId =
   | 'profession'
   | 'politics'
   | 'avocations'
+  /**
+   * Associative, EXTENDING Table 1 -- see IRREVERSIBLE_FACETS below.
+   *
+   * Not in the paper. Table 1's associative tiles are all defined by ongoing choice, so
+   * none of them is irreversible, and a library built only from them leaves the whole
+   * Associative sector unable to produce a single rim anchor.
+   */
+  | 'life-events'
+  | 'standing'
+  | 'embodied'
 
 export const CATEGORIES: readonly CategoryId[] = ['demographic', 'geographic', 'associative']
 
 export const FACETS_BY_CATEGORY: Readonly<Record<CategoryId, readonly FacetId[]>> = {
   demographic: ['age', 'ethnicity', 'gender', 'race'],
   geographic: ['climate', 'temperature', 'coastal-inland', 'urban-rural', 'regional-country'],
-  associative: ['family', 'religion', 'employer', 'profession', 'politics', 'avocations'],
+  associative: [
+    'family',
+    'religion',
+    'employer',
+    'profession',
+    'politics',
+    'avocations',
+    'life-events',
+    'standing',
+    'embodied',
+  ],
 }
 
 export const CATEGORY_OF_FACET: Readonly<Record<FacetId, CategoryId>> = (() => {
@@ -68,6 +88,39 @@ export const FACET_LABEL: Readonly<Record<FacetId, string>> = {
   profession: 'Profession',
   politics: 'Politics',
   avocations: 'Avocations',
+  'life-events': 'Life events',
+  standing: 'Standing',
+  embodied: 'Embodied',
+}
+
+/**
+ * The three associative facets this app adds to Chao & Moon's Table 1, and why.
+ *
+ * The paper defines the Associative category as "formal and informal groups that an
+ * individual chooses to associate and identify with". Every sample tile it lists under
+ * that heading -- family, religion, employer, profession, politics, avocations -- is an
+ * ONGOING affiliation, something you could in principle walk away from. Read the
+ * immutability axis as "given at birth" and that follows naturally: nothing associative
+ * is given at birth, so nothing associative is fixed, so the Associative sector can
+ * never hold a rim anchor. The artwork then says something false about people: that
+ * everything they chose is still up for renegotiation.
+ *
+ * The correction is to separate two axes the paper leaves fused. CHOSEN vs UNCHOSEN is
+ * one question; REVERSIBLE vs IRREVERSIBLE is a different one. An association can be
+ * freely chosen and still be permanent -- having raised a child, a divorce, a criminal
+ * record, a second citizenship, a body altered by injury. These are associative in
+ * content and immovable in fact, and they are what lets the Associative rim carry
+ * weight.
+ *
+ * Recorded here rather than left implicit, because a reader checking this app against
+ * Table 1 should be able to see immediately which facets are the paper's and which are
+ * ours.
+ */
+export const IRREVERSIBLE_FACETS: readonly FacetId[] = ['life-events', 'standing', 'embodied']
+
+/** True for a facet this app added beyond Table 1. */
+export function isExtensionFacet(f: FacetId): boolean {
+  return IRREVERSIBLE_FACETS.includes(f)
 }
 
 /**

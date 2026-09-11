@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useStore } from '../state/store'
 import { parseProfile, serializeProfile } from '../domain/validate'
+import { QUIZ_LENGTH, firstUnansweredIndex, pairAt } from '../domain/quiz'
 import { EXPORT_SIZES } from '../render/export-png'
 
 /**
@@ -21,6 +22,22 @@ export default function Toolbar(): JSX.Element {
   const answers = useStore((s) => s.answers)
   const loadSample = useStore((s) => s.loadSample)
   const clearProfile = useStore((s) => s.clearProfile)
+  const setMode = useStore((s) => s.setMode)
+  const startQuiz = useStore((s) => s.startQuiz)
+
+  /**
+   * Where `← Questions` will actually land, for the button's title.
+   *
+   * Computed from the same `firstUnansweredIndex` the store uses, so the promise the
+   * tooltip makes and the navigation that happens cannot drift apart.
+   */
+  const nextQuestion = useMemo(() => {
+    const answered = new Set(answers.map((a) => a.pairId))
+    const i = firstUnansweredIndex(answered)
+    if (i < 0) return null
+    const p = pairAt(i)
+    return { number: i + 1, label: p ? `${p.poleA} / ${p.poleB}` : '' }
+  }, [answers])
 
   const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ tone: 'ok' | 'warn' | 'bad'; text: string } | null>(null)
@@ -111,11 +128,51 @@ export default function Toolbar(): JSX.Element {
         fontSize: 12,
       }}
     >
-      <strong style={{ fontWeight: 600 }}>Cultural Mosaic</strong>
+{/*
+        The wordmark is the way home, matching QuizBar so both bars share one gesture.
+      */}
+      <button
+        onClick={() => setMode('splash')}
+        title="Back to the start screen"
+        style={{
+          background: 'none',
+          border: 'none',
+          padding: 0,
+          margin: 0,
+          font: 'inherit',
+          fontWeight: 600,
+          color: 'var(--text)',
+          cursor: 'pointer',
+        }}
+      >
+        Cultural Mosaic
+      </button>
       <span style={{ color: 'var(--text-dim)' }}>
         {title}
         {dirty ? ' *' : ''}
       </span>
+
+      {/*
+        Back to the guided questions. Before this the studio was a DEAD END -- nothing in
+        this bar ever called setMode, so the only route back to the questions was to
+        restart the app.
+
+        `startQuiz(false)` resumes at the first unanswered question rather than the
+        beginning, so this is safe to press mid-profile. The label stays static and the
+        title names the destination, so the button is trustworthy before you commit to it
+        rather than shifting under the cursor.
+      */}
+      <button
+        onClick={() => startQuiz(false)}
+        style={barBtn}
+        title={
+          nextQuestion === null
+            ? 'Every question answered — reviews them from the top'
+            : `Resumes at question ${nextQuestion.number} of ${QUIZ_LENGTH}: ${nextQuestion.label}`
+        }
+      >
+        ← Questions
+      </button>
 
       <button onClick={() => void onOpen()} style={barBtn} disabled={busy !== null}>
         Open
@@ -168,21 +225,22 @@ export default function Toolbar(): JSX.Element {
         onChange={(v) => setRender({ showScaffolding: v })}
       />
       <Toggle
-        label="Ghost"
-        title="Draw eroded material as a faint trace: the identities that did not become structure"
-        on={render.showGhost}
-        onChange={(v) => setRender({ showGhost: v })}
+        label="Labels"
+        title="Name the pinned anchors on the artwork: the identities holding the structure up"
+        on={render.showAnchorLabels}
+        onChange={(v) => setRender({ showAnchorLabels: v })}
+      />
+      <Toggle
+        label="Answers"
+        title="Name every tile's chosen pole, not just the anchors -- so a printed mosaic is legible without hovering, and two people's printouts can be compared pole by pole"
+        on={render.showPoleLabels}
+        onChange={(v) => setRender({ showPoleLabels: v })}
       />
       <Toggle
         label="Invert anchors"
         title="Chosen associations pin, inherited traits load. The layout encodes a contestable claim; this inverts it."
         on={layout.invertAnchors}
         onChange={setInvertAnchors}
-      />
-      <Segmented
-        options={['mosaic', 'smooth'] as const}
-        value={render.upscale}
-        onChange={(v) => setRender({ upscale: v })}
       />
       <Segmented
         options={['ink', 'paper'] as const}

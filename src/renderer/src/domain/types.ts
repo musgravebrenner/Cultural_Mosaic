@@ -35,13 +35,64 @@ export interface WordPair {
   readonly skew?: Cat3
   /**
    * Social fixity in [0,1]: how much could you change this by a decision this year?
-   * Not a claim about biology. 1 = given at birth (pins as a rim anchor),
+   * Not a claim about biology. 1 = unchangeable (pins as a rim anchor),
    * 0 = chosen daily (applies a load near the hub).
+   *
+   * UNCHANGEABLE, not "given at birth" -- and the difference is load-bearing. Chao &
+   * Moon define the Associative category as the groups "an individual chooses to
+   * associate and identify with", so reading this axis as natality made every
+   * associative tile fluid by construction and left the entire Associative sector
+   * without a single rim anchor. But choice and reversibility are independent: you can
+   * choose something once and never be able to unchoose it. Raising a child, a divorce,
+   * a criminal record, a second citizenship, a body changed by injury -- all chosen or
+   * unchosen, none undoable by a decision this year. Those are what anchor the
+   * Associative rim.
    */
   readonly immutability: number
   readonly note?: string
   /** Reviewer note on a pair kept with reservation. Shown in dev; see docs/design. */
   readonly risky?: string
+}
+
+// ---------------------------------------------------------------------------
+// Layer 1b -- anchor questions. Single-choice-from-N facts, never a spectrum.
+// ---------------------------------------------------------------------------
+
+/**
+ * An anchor is a hard fact, not an orientation: you either have raised a child or you
+ * have not. Forcing that through `WordPair`'s poleA/poleB slider would break the
+ * moment a question needs more than two options (birth decade), so it is a distinct
+ * shape rather than a `WordPair` with `skew` disabled.
+ */
+export interface AnchorOption {
+  /** Stable within the anchor: 'male', 'has', 'hasnt', '1990s'... */
+  readonly id: string
+  readonly label: string
+  /** Resolved hue this option contributes, already L1-normalized. */
+  readonly hue: Cat3
+}
+
+export interface AnchorPair {
+  readonly id: string
+  readonly category: CategoryId
+  readonly facet: FacetId
+  readonly prompt: string
+  readonly options: readonly AnchorOption[]
+  readonly immutability: number
+  readonly note?: string
+}
+
+/**
+ * Once answered, an anchor is always full conviction -- there is no partial-anchor
+ * state, matching "you either have or haven't." Skipping one simply means no
+ * `AnchorAnswer` exists for it, the same absent-vs-dormant distinction the app already
+ * draws for regular questions.
+ */
+export interface AnchorAnswer {
+  readonly answerId: string
+  readonly anchorId: string
+  readonly optionId: string
+  readonly addedAt: number
 }
 
 // ---------------------------------------------------------------------------
@@ -62,6 +113,22 @@ export const LEAN_CENTER: LeanIndex = 3
 export type StrengthLevel = 0 | 1 | 2 | 3
 export const STRENGTH_VALUES: readonly number[] = [0, 0.33, 0.66, 1.0]
 export const STRENGTH_LABELS: readonly string[] = ['Dormant', 'Minor', 'Notable', 'Core']
+
+/**
+ * Strength is DERIVED from lean, not a second control. Distance from centre IS
+ * conviction: the two extreme notches are Core, the two inner notches grade down, and
+ * dead centre -- "equally both", the one position with no direction at all -- is
+ * Dormant. This replaces an earlier design where strength was set independently and
+ * centre was hard-coded to Core (biculturals as maximally strong material); the
+ * simpler one-gesture reading is what the instrument actually asks a user to do.
+ */
+export function strengthFromLean(leanIndex: LeanIndex): StrengthLevel {
+  const distance = Math.abs(leanIndex - LEAN_CENTER)
+  if (distance >= 3) return 3
+  if (distance === 2) return 2
+  if (distance === 1) return 1
+  return 0
+}
 
 export interface TileAnswer {
   readonly answerId: string
@@ -115,16 +182,32 @@ export interface SolverSettings {
 }
 
 export interface RenderConfig {
-  readonly upscale: 'mosaic' | 'smooth'
   /** smoothstep band on rho. The primary aesthetic dial. */
   readonly solidLo: number
   readonly solidHi: number
   readonly theme: 'paper' | 'ink'
   readonly showScaffolding: boolean
+  /**
+   * Name the pinned anchors on the artwork.
+   *
+   * A SEPARATE flag from showScaffolding rather than riding on it. Scaffolding is the
+   * measuring apparatus -- sector arcs, immutability rings, axis legend -- and the
+   * obvious reason to turn it off is to get a clean image. Anchor labels are content:
+   * they say which of your identities is holding the structure up. Tying them together
+   * would make "read the labels" and "get a clean picture" mutually exclusive, and
+   * labels-on with scaffolding-off is the combination people actually want.
+   */
+  readonly showAnchorLabels: boolean
+  /**
+   * Name every non-hub tile's chosen pole on the artwork, not just the pinned
+   * anchors' -- a SEPARATE flag from `showAnchorLabels` for the same reason that one
+   * is separate from `showScaffolding`: this is about making an already-answered
+   * choice legible (e.g. so two people's printed mosaics can be compared by eye),
+   * not about naming which identities hold the structure up.
+   */
+  readonly showPoleLabels: boolean
   /** 0 = off. Gradient-magnitude edge accent; gives the truss an inked quality. */
   readonly edgeAccent: number
-  /** Render eroded material as a faint trace -- Prop 3(c), the independent tiles. */
-  readonly showGhost: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +215,7 @@ export interface RenderConfig {
 // ---------------------------------------------------------------------------
 
 export interface MosaicProfile {
-  readonly schemaVersion: 1
+  readonly schemaVersion: 2
   readonly kind: 'cultural-mosaic-profile'
   readonly id: string
   title: string
@@ -146,6 +229,9 @@ export interface MosaicProfile {
    */
   pairs: WordPair[]
   answers: TileAnswer[]
+  /** Snapshot of every referenced anchor, same rationale as `pairs`. */
+  anchors: AnchorPair[]
+  anchorAnswers: AnchorAnswer[]
   layout: LayoutConfig
   solver: SolverSettings
   render: RenderConfig
@@ -185,7 +271,14 @@ export interface PlacedTile {
   /** Normalized, centred, y-up. */
   readonly x: number
   readonly y: number
-  /** Deposit footprint in normalized units. */
+  /** Lattice cell this tile claimed. Exact, so hit-testing needs no float search. */
+  readonly tileCol: number
+  readonly tileRow: number
+  /**
+   * HALF THE TILE BODY, in normalized units. Named sigma for history -- it was the
+   * Gaussian deposit width before each question became one discrete square tile.
+   * boundary.ts sizes pin regions and passive-solid patches from it.
+   */
   readonly sigma: number
   /** Peak deposit amplitude. Comes from salience, NOT |lean|. */
   readonly amplitude: number

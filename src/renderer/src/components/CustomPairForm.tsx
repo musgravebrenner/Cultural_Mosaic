@@ -52,10 +52,25 @@ export default function CustomPairForm(): JSX.Element {
     setOpen(false)
   }
 
+  // Deliberately unprominent: a small text link, not a full-width button. Adding a
+  // brand-new pair to a primary category is a power-user move -- possible, but the
+  // panel should not be inviting it as loudly as answering what is already there.
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} style={{ ...box, cursor: 'pointer', width: '100%' }}>
-        + New custom pair
+      <button
+        onClick={() => setOpen(true)}
+        style={{
+          background: 'none',
+          border: 'none',
+          padding: '4px 2px',
+          color: 'var(--text-dim)',
+          textDecoration: 'underline',
+          cursor: 'pointer',
+          font: 'inherit',
+          fontSize: 10,
+        }}
+      >
+        + add a custom question (advanced)
       </button>
     )
   }
@@ -111,7 +126,7 @@ export default function CustomPairForm(): JSX.Element {
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--text-dim)' }}>
           <span>chosen daily</span>
           <span>long-term</span>
-          <span>given at birth</span>
+          <span>unchangeable</span>
         </div>
       </Field>
 

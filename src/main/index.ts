@@ -51,6 +51,37 @@ function createWindow(): void {
           ? "window.__mosaic.store.getState().setRender({theme:'"
             + process.env['MOSAIC_THEME'] + "'});"
           : ''
+        const labels = process.env['MOSAIC_LABELS']
+          ? "window.__mosaic.store.getState().setRender({showAnchorLabels:true"
+            + (process.env['MOSAIC_LABELS'] === 'only' ? ",showScaffolding:false" : '')
+            + "});"
+          : ''
+        // MOSAIC_POLE_LABELS: same idea as MOSAIC_LABELS, for the "Answers" toggle
+        // (showPoleLabels) instead of the anchor-only one.
+        const poleLabels = process.env['MOSAIC_POLE_LABELS']
+          ? "window.__mosaic.store.getState().setRender({showPoleLabels:true"
+            + (process.env['MOSAIC_POLE_LABELS'] === 'only' ? ",showScaffolding:false" : '')
+            + "});"
+          : ''
+        /**
+         * MOSAIC_ANSWERS=<json> replaces loadSample() with an arbitrary answer set, for
+         * exercising configurations the shipped Sample profile does not (e.g. an engaged
+         * antagonism). JSON array of [pairId, leanIndex, strength] triples.
+         */
+        const answersJson = process.env['MOSAIC_ANSWERS']
+        const customAnswers = answersJson
+          ? "window.__mosaic.store.setState({answers:(" + answersJson + ").map(function(t,i){"
+            + "return {answerId:'a-'+t[0],pairId:t[0],leanIndex:t[1],strength:t[2],addedAt:i};"
+            + "}),dirty:true,tab:'profile',mode:'studio'});"
+          : ''
+        /**
+         * Explicit AND deferred, because the saved draft is read over IPC and applied
+         * asynchronously: whenever it lands after this script, it restores the splash and
+         * the screenshot captures the wrong screen. Setting the mode from a timer puts it
+         * after any such late arrival.
+         */
+        const studio =
+          "setTimeout(function(){window.__mosaic.store.getState().setMode('studio');},500);"
         const vf = process.env['MOSAIC_VF']
           ? "window.__mosaic.store.getState().setSolver({volumeFraction:" + process.env['MOSAIC_VF'] + "});"
           : ''
@@ -73,14 +104,23 @@ function createWindow(): void {
             + "window.__mosaic.store.getState().setMode('studio');"
             + 'setTimeout(function(){window.dispatchEvent(new CustomEvent("mosaic:run",'
             + '{detail:{iterations:140}}));},700); true'
+          // `th` on every branch: the quiz and seed screens used to skip it, so
+          // MOSAIC_THEME=paper silently produced a dark screenshot of them.
           const nav =
-            screen === 'seed'
+            th
+            + (screen === 'seed'
               ? seedOnly
               : screen === 'quiz'
-              ? 'window.__mosaic.store.getState().startQuiz(true); true'
-              : screen === 'flow'
-                ? th + flow
-                : th + "window.__mosaic.store.getState().setMode('" + screen + "'); true"
+                ? 'window.__mosaic.store.getState().startQuiz(true);'
+                  // MOSAIC_QUIZ_INDEX: jump straight to a position (e.g. the anchor
+                  // phase, at QUIZ_LENGTH) without clicking through every question.
+                  + (process.env['MOSAIC_QUIZ_INDEX']
+                    ? 'window.__mosaic.store.getState().setQuizIndex('
+                      + process.env['MOSAIC_QUIZ_INDEX'] + '); true'
+                    : 'true')
+                : screen === 'flow'
+                  ? flow
+                  : "window.__mosaic.store.getState().setMode('" + screen + "'); true")
           void win.webContents
             .executeJavaScript(nav)
             .then(() => new Promise((r) => setTimeout(r, screen === 'flow' ? 12000 : screen === 'seed' ? 1500 : 700)))
@@ -99,19 +139,62 @@ function createWindow(): void {
           return
         }
 
+        /**
+         * MOSAIC_HOVER=<fx>,<fy> moves the pointer over the field canvas at those
+         * fractions of its box and reports what the tooltip says, so canvas hit testing
+         * can be checked without a human at the keyboard. Dispatched on the canvas so it
+         * bubbles to the wrap, which is where the listener lives.
+         */
+        const hoverAt = process.env['MOSAIC_HOVER']
+        const hover = hoverAt
+          ? 'setTimeout(function(){'
+            + 'var c=document.querySelector("canvas");var r=c.getBoundingClientRect();'
+            + 'var f=("' + hoverAt + '").split(",");'
+            + 'c.dispatchEvent(new MouseEvent("mousemove",{clientX:r.left+r.width*(+f[0]),'
+            + 'clientY:r.top+r.height*(+f[1]),bubbles:true}));},500);'
+          : ''
+        /**
+         * MOSAIC_CLICK=<text> finds the first <button> whose text contains that string
+         * and clicks it -- a development affordance for reaching a collapsed panel (like
+         * the "> Solver" toggle) without a human at the keyboard.
+         */
+        const clickText = process.env['MOSAIC_CLICK']
+        const click = clickText
+          ? 'setTimeout(function(){'
+            + 'var bs=document.querySelectorAll("button");'
+            + 'for(var i=0;i<bs.length;i++){if(bs[i].textContent.indexOf("' + clickText + '")>=0)'
+            + '{bs[i].click();break;}}},550);'
+          : ''
+        const loadProfile = customAnswers || "window.__mosaic.store.getState().loadSample();"
         const script = process.env['MOSAIC_RUN']
-          ? th + "window.__mosaic.store.getState().loadSample();" + vf
+          ? loadProfile + th + vf + labels + poleLabels + studio + hover + click
             + "setTimeout(function(){window.dispatchEvent(new CustomEvent('mosaic:run',"
             + "{detail:{iterations:" + process.env['MOSAIC_RUN'] + "}}));},600); true"
-          : th + 'window.__mosaic.store.getState().loadSample(); true'
+          : loadProfile + th + vf + labels + poleLabels + studio + hover + click + ' true'
         void win.webContents
           .executeJavaScript(script)
           .then(
             () =>
               new Promise((r) => {
-                setTimeout(r, process.env['MOSAIC_RUN'] ? 14000 : 900)
+                // MOSAIC_WAIT=<ms> overrides the settle time. A converged run at the
+                // default 96 grid needs far longer than the 14s default, and guessing
+                // wrong yields a screenshot of iteration 1 that looks like a bug.
+                const wait = Number(process.env['MOSAIC_WAIT'] ?? '')
+                setTimeout(
+                  r,
+                  Number.isFinite(wait) && wait > 0 ? wait : process.env['MOSAIC_RUN'] ? 14000 : 1600,
+                )
               }),
           )
+          .then(async () => {
+            if (!process.env['MOSAIC_HOVER']) return
+            const tip: string = await win.webContents.executeJavaScript(
+              '(function(){var e=document.querySelector("[data-mosaic-tip]");'
+                + 'return !e?"missing":e.hidden?"hidden":e.textContent;})()',
+            )
+            process.stdout.write(`HOVER ${tip}
+`)
+          })
           .then(() => win.webContents.capturePage())
           .then((img) => writeFile(process.env['MOSAIC_SHOT']!, img.toPNG()))
           .then(() => {
@@ -124,7 +207,11 @@ function createWindow(): void {
 `)
             app.exit(1)
           })
-      }, 1200)
+        // 2500, not 1200: the saved draft is read over IPC and applied asynchronously, so
+        // a script that runs before it lands gets silently overwritten -- the app comes
+        // back to the splash with the draft's answers and the screenshot shows the wrong
+        // screen entirely.
+      }, 2500)
     })
   }
 

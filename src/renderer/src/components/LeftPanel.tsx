@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
-import { LIBRARY_BY_FACET, useStore } from '../state/store'
-import { LIBRARY } from '../domain/library'
+import { ANCHORS_BY_FACET, LIBRARY_BY_FACET, useStore } from '../state/store'
+import { ANCHORS, LIBRARY } from '../domain/library'
 import {
   CATEGORIES,
   CATEGORY_LABEL,
@@ -11,7 +11,13 @@ import type { CategoryId, FacetId } from '../domain/taxonomy'
 import { LEAN_NOTCHES, STRENGTH_LABELS } from '../domain/types'
 import RunControls from './RunControls'
 import CustomPairForm from './CustomPairForm'
-import type { LeanIndex, StrengthLevel, TileAnswer, WordPair } from '../domain/types'
+import type {
+  AnchorAnswer,
+  AnchorPair,
+  LeanIndex,
+  TileAnswer,
+  WordPair,
+} from '../domain/types'
 
 const CAT_CSS: Record<CategoryId, string> = {
   demographic: '#e5484d',
@@ -19,11 +25,16 @@ const CAT_CSS: Record<CategoryId, string> = {
   associative: '#5b6ee8',
 }
 
+/**
+ * One unified, taxonomy-grouped list rather than a Library tab and a My Profile tab.
+ *
+ * The two used to be separate views of the same data -- browse here, edit there -- and
+ * that split cost a navigation step for no real benefit: every question is always
+ * somewhere in this taxonomy whether or not it has been answered yet, so browsing and
+ * editing can be the same screen. An unanswered row is compact and quiet; answering it
+ * expands it in place into the full editor. Nothing ever asks you to change screens.
+ */
 export default function LeftPanel(): JSX.Element {
-  const tab = useStore((s) => s.tab)
-  const setTab = useStore((s) => s.setTab)
-  const answers = useStore((s) => s.answers)
-
   return (
     <div
       style={{
@@ -36,48 +47,11 @@ export default function LeftPanel(): JSX.Element {
         minHeight: 0,
       }}
     >
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
-        <TabButton active={tab === 'library'} onClick={() => setTab('library')}>
-          Library
-        </TabButton>
-        <TabButton active={tab === 'profile'} onClick={() => setTab('profile')}>
-          My Profile · {answers.length}
-        </TabButton>
-      </div>
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-        {tab === 'library' ? <LibraryBrowser /> : <ProfileList />}
+        <UnifiedBrowser />
       </div>
       <RunControls />
     </div>
-  )
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}): JSX.Element {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        flex: 1,
-        padding: '10px 8px',
-        background: active ? 'var(--bg)' : 'transparent',
-        color: active ? 'var(--text)' : 'var(--text-dim)',
-        border: 'none',
-        borderBottom: active ? '2px solid var(--text)' : '2px solid transparent',
-        cursor: 'pointer',
-        font: 'inherit',
-        fontWeight: active ? 600 : 400,
-      }}
-    >
-      {children}
-    </button>
   )
 }
 
@@ -87,32 +61,46 @@ function TabButton({
  * taxonomy while the user browses -- real value for a class project, where the grader is
  * looking for evidence of engagement with the source framework.
  */
-function LibraryBrowser(): JSX.Element {
+function UnifiedBrowser(): JSX.Element {
   const search = useStore((s) => s.search)
   const setSearch = useStore((s) => s.setSearch)
   const expanded = useStore((s) => s.expandedFacets)
   const toggleFacet = useStore((s) => s.toggleFacet)
   const answers = useStore((s) => s.answers)
-  const addAnswer = useStore((s) => s.addAnswer)
+  const anchorAnswers = useStore((s) => s.anchorAnswers)
 
-  const answeredPairIds = useMemo(() => new Set(answers.map((a) => a.pairId)), [answers])
+  const answerByPairId = useMemo(
+    () => new Map(answers.map((a) => [a.pairId, a])),
+    [answers],
+  )
+  const anchorAnswerByAnchorId = useMemo(
+    () => new Map(anchorAnswers.map((a) => [a.anchorId, a])),
+    [anchorAnswers],
+  )
 
   const q = search.trim().toLowerCase()
-  const matches = (p: WordPair): boolean =>
+  const matchesPair = (p: WordPair): boolean =>
     q === '' ||
     p.poleA.toLowerCase().includes(q) ||
     p.poleB.toLowerCase().includes(q) ||
     String(p.facet).includes(q) ||
     (p.note?.toLowerCase().includes(q) ?? false)
+  const matchesAnchor = (a: AnchorPair): boolean =>
+    q === '' ||
+    a.prompt.toLowerCase().includes(q) ||
+    String(a.facet).includes(q) ||
+    a.options.some((o) => o.label.toLowerCase().includes(q)) ||
+    (a.note?.toLowerCase().includes(q) ?? false)
 
-  const hits = q === '' ? null : LIBRARY.filter(matches)
+  const pairHits = q === '' ? null : LIBRARY.filter(matchesPair)
+  const anchorHits = q === '' ? null : ANCHORS.filter(matchesAnchor)
 
   return (
     <div style={{ padding: 10 }}>
       <input
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        placeholder={`Search ${LIBRARY.length} pairs…`}
+        placeholder={`Search ${LIBRARY.length + ANCHORS.length} questions…`}
         style={{
           width: '100%',
           padding: '7px 9px',
@@ -124,58 +112,62 @@ function LibraryBrowser(): JSX.Element {
         }}
       />
 
-      {hits ? (
+      {pairHits || anchorHits ? (
         <div style={{ marginTop: 10 }}>
           <div style={{ color: 'var(--text-dim)', fontSize: 11, marginBottom: 6 }}>
-            {hits.length} match{hits.length === 1 ? '' : 'es'}
+            {pairHits!.length + anchorHits!.length} match
+            {pairHits!.length + anchorHits!.length === 1 ? '' : 'es'}
           </div>
-          {hits.map((p) => (
-            <LibraryRow
-              key={p.id}
-              pair={p}
-              added={answeredPairIds.has(p.id)}
-              onAdd={() => addAnswer(p.id)}
-            />
+          {pairHits!.map((p) => (
+            <PairRow key={p.id} pair={p} answer={answerByPairId.get(p.id)} />
+          ))}
+          {anchorHits!.map((a) => (
+            <AnchorRow key={a.id} anchor={a} answer={anchorAnswerByAnchorId.get(a.id)} />
           ))}
         </div>
       ) : (
-        CATEGORIES.map((cat) => (
-          <div key={cat} style={{ marginTop: 12 }}>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 7,
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: 0.6,
-                color: CAT_CSS[cat],
-                marginBottom: 4,
-              }}
-            >
-              <span
+        <>
+          {CATEGORIES.map((cat) => (
+            <div key={cat} style={{ marginTop: 12 }}>
+              <div
                 style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 8,
-                  background: CAT_CSS[cat],
-                  display: 'inline-block',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 7,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  letterSpacing: 0.6,
+                  color: CAT_CSS[cat],
+                  marginBottom: 4,
                 }}
-              />
-              {CATEGORY_LABEL[cat].toUpperCase()}
+              >
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 8,
+                    background: CAT_CSS[cat],
+                    display: 'inline-block',
+                  }}
+                />
+                {CATEGORY_LABEL[cat].toUpperCase()}
+              </div>
+              {FACETS_BY_CATEGORY[cat].map((facet) => (
+                <FacetGroup
+                  key={facet}
+                  facet={facet}
+                  open={expanded.has(facet)}
+                  onToggle={() => toggleFacet(facet)}
+                  answerByPairId={answerByPairId}
+                  anchorAnswerByAnchorId={anchorAnswerByAnchorId}
+                />
+              ))}
             </div>
-            {FACETS_BY_CATEGORY[cat].map((facet) => (
-              <FacetGroup
-                key={facet}
-                facet={facet}
-                open={expanded.has(facet)}
-                onToggle={() => toggleFacet(facet)}
-                answered={answeredPairIds}
-                onAdd={addAnswer}
-              />
-            ))}
+          ))}
+          <div style={{ marginTop: 18 }}>
+            <CustomPairForm />
           </div>
-        ))
+        </>
       )}
     </div>
   )
@@ -185,16 +177,20 @@ function FacetGroup({
   facet,
   open,
   onToggle,
-  answered,
-  onAdd,
+  answerByPairId,
+  anchorAnswerByAnchorId,
 }: {
   facet: FacetId
   open: boolean
   onToggle: () => void
-  answered: ReadonlySet<string>
-  onAdd: (id: string) => void
-}): JSX.Element {
+  answerByPairId: ReadonlyMap<string, TileAnswer>
+  anchorAnswerByAnchorId: ReadonlyMap<string, AnchorAnswer>
+}): JSX.Element | null {
   const pairs = LIBRARY_BY_FACET.get(facet) ?? []
+  const anchors = ANCHORS_BY_FACET.get(facet) ?? []
+  const total = pairs.length + anchors.length
+  if (total === 0) return null
+
   return (
     <div>
       <button
@@ -215,7 +211,7 @@ function FacetGroup({
         <span>
           {open ? '▾' : '▸'} {FACET_LABEL[facet]}
         </span>
-        <span style={{ color: 'var(--text-dim)' }}>{pairs.length}</span>
+        <span style={{ color: 'var(--text-dim)' }}>{total}</span>
       </button>
       {open && (
         <div style={{ paddingLeft: 8 }}>
@@ -233,12 +229,10 @@ function FacetGroup({
             </div>
           )}
           {pairs.map((p) => (
-            <LibraryRow
-              key={p.id}
-              pair={p}
-              added={answered.has(p.id)}
-              onAdd={() => onAdd(p.id)}
-            />
+            <PairRow key={p.id} pair={p} answer={answerByPairId.get(p.id)} />
+          ))}
+          {anchors.map((a) => (
+            <AnchorRow key={a.id} anchor={a} answer={anchorAnswerByAnchorId.get(a.id)} />
           ))}
         </div>
       )}
@@ -246,16 +240,17 @@ function FacetGroup({
   )
 }
 
-function LibraryRow({
-  pair,
-  added,
-  onAdd,
-}: {
-  pair: WordPair
-  added: boolean
-  onAdd: () => void
-}): JSX.Element {
-  const setTab = useStore((s) => s.setTab)
+/** Either the compact browse row or the full in-place editor, depending on answeredness. */
+function PairRow({ pair, answer }: { pair: WordPair; answer: TileAnswer | undefined }): JSX.Element {
+  return answer ? <AnsweredPairRow pair={pair} answer={answer} /> : <UnansweredPairRow pair={pair} />
+}
+
+/**
+ * Compact and visually QUIET -- lower contrast than an answered row, so the eye lands
+ * on what has already been answered rather than on the full menu of what could be.
+ */
+function UnansweredPairRow({ pair }: { pair: WordPair }): JSX.Element {
+  const addAnswer = useStore((s) => s.addAnswer)
   return (
     <div
       style={{
@@ -264,6 +259,7 @@ function LibraryRow({
         gap: 8,
         padding: '5px 8px',
         borderRadius: 4,
+        opacity: 0.7,
       }}
       title={pair.note ?? ''}
     >
@@ -273,21 +269,22 @@ function LibraryRow({
       </span>
       <ImmutabilityPip v={pair.immutability} />
       <button
-        onClick={added ? () => setTab('profile') : onAdd}
-        title={added ? 'Already in your profile' : 'Add to profile'}
+        onClick={() => addAnswer(pair.id)}
+        title="Add to your profile"
         style={{
-          width: 22,
-          height: 22,
+          width: 20,
+          height: 20,
           flex: '0 0 auto',
           borderRadius: 4,
           border: '1px solid var(--border)',
-          background: added ? 'transparent' : 'var(--bg)',
-          color: added ? 'var(--success)' : 'var(--text)',
+          background: 'transparent',
+          color: 'var(--text-dim)',
           cursor: 'pointer',
           font: 'inherit',
+          fontSize: 12,
         }}
       >
-        {added ? '✓' : '+'}
+        +
       </button>
     </div>
   )
@@ -317,7 +314,7 @@ function MixBar({ mix }: { mix: readonly [number, number, number] }): JSX.Elemen
 }
 
 /**
- * How fixed the trait is: filled = given at birth, hollow = chosen daily.
+ * How fixed the trait is: filled = unchangeable, hollow = chosen daily.
  *
  * Uses an inner disc scaled by the value rather than color-mix() against transparent.
  * Mixing toward transparent in sRGB produces a translucent colour whose apparent
@@ -352,56 +349,23 @@ function ImmutabilityPip({ v }: { v: number }): JSX.Element {
   )
 }
 
-function ProfileList(): JSX.Element {
-  const answers = useStore((s) => s.answers)
-  const setTab = useStore((s) => s.setTab)
-
-  if (answers.length === 0) {
-    return (
-      <div style={{ padding: 24, color: 'var(--text-dim)', lineHeight: 1.6 }}>
-        <p style={{ marginTop: 0 }}>Nothing added yet.</p>
-        <p>
-          Browse the <button onClick={() => setTab('library')} style={linkBtn}>library</button> and
-          add the pairs that describe you. Each one deposits colour and material into the
-          mosaic; where your identities agree, the structure holds.
-        </p>
-        <div style={{ marginTop: 18 }}>
-          <CustomPairForm />
-        </div>
-      </div>
-    )
-  }
-
-  const ordered = answers.slice().sort((a, b) => a.addedAt - b.addedAt)
-  return (
-    <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {ordered.map((a) => (
-        <AnswerCard key={a.answerId} answer={a} />
-      ))}
-      <CustomPairForm />
-    </div>
-  )
-}
-
-const linkBtn: React.CSSProperties = {
-  background: 'none',
+const iconBtn: React.CSSProperties = {
+  width: 18,
+  height: 18,
   border: 'none',
-  padding: 0,
-  color: 'var(--text)',
-  textDecoration: 'underline',
+  borderRadius: 3,
+  background: 'transparent',
+  color: 'var(--text-dim)',
   cursor: 'pointer',
   font: 'inherit',
+  lineHeight: 1,
 }
 
-function AnswerCard({ answer }: { answer: TileAnswer }): JSX.Element {
-  const pair = useStore((s) => s.pairById(answer.pairId))
+function AnsweredPairRow({ pair, answer }: { pair: WordPair; answer: TileAnswer }): JSX.Element {
   const setLean = useStore((s) => s.setLean)
-  const setStrength = useStore((s) => s.setStrength)
   const setOverride = useStore((s) => s.setImmutabilityOverride)
   const remove = useStore((s) => s.removeAnswer)
   const setHovered = useStore((s) => s.setHovered)
-
-  if (!pair) return <div />
 
   const lean = LEAN_NOTCHES[answer.leanIndex] ?? 0
   const dormant = answer.strength === 0
@@ -416,7 +380,8 @@ function AnswerCard({ answer }: { answer: TileAnswer }): JSX.Element {
         borderRadius: 'var(--radius)',
         padding: '8px 10px 10px',
         background: 'var(--bg)',
-        opacity: dormant ? 0.45 : 1,
+        margin: '4px 0',
+        opacity: dormant ? 0.55 : 1,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
@@ -444,14 +409,9 @@ function AnswerCard({ answer }: { answer: TileAnswer }): JSX.Element {
         onChange={(i) => setLean(answer.answerId, i)}
       />
 
-      <div style={{ marginTop: 9 }}>
-        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 3 }}>
-          Matters to me
-        </div>
-        <StrengthSelector
-          value={answer.strength}
-          onChange={(v) => setStrength(answer.answerId, v)}
-        />
+      <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text-dim)' }}>
+        <strong style={{ color: 'var(--text)' }}>{STRENGTH_LABELS[answer.strength]}</strong> —
+        from how far you leaned. Dead centre is Dormant; either extreme is Core.
       </div>
 
       <details style={{ marginTop: 8 }}>
@@ -484,7 +444,7 @@ function AnswerCard({ answer }: { answer: TileAnswer }): JSX.Element {
             }}
           >
             <span>chosen daily</span>
-            <span>given at birth</span>
+            <span>unchangeable</span>
           </div>
           {answer.immutabilityOverride !== undefined && (
             <button
@@ -505,16 +465,14 @@ function AnswerCard({ answer }: { answer: TileAnswer }): JSX.Element {
   )
 }
 
-const iconBtn: React.CSSProperties = {
-  width: 18,
-  height: 18,
+const linkBtn: React.CSSProperties = {
+  background: 'none',
   border: 'none',
-  borderRadius: 3,
-  background: 'transparent',
-  color: 'var(--text-dim)',
+  padding: 0,
+  color: 'var(--text)',
+  textDecoration: 'underline',
   cursor: 'pointer',
   font: 'inherit',
-  lineHeight: 1,
 }
 
 /**
@@ -593,40 +551,71 @@ function PolePairSlider({
 }
 
 /**
- * Four labelled buttons rather than a second continuous slider. That is what keeps the
- * second control from doubling interaction cost: one click and one glance, and four
- * levels is ample resolution for the physics. Dormant is a real kept state -- it stays
- * in the document so it can be toggled back, but contributes nothing.
+ * Anchors are facts, not spectrums: one click on an option both adds and fully answers
+ * it, since there is no partial state to dial in afterward. Always tagged optional --
+ * unlike a regular question, an anchor may genuinely not apply yet.
  */
-function StrengthSelector({
-  value,
-  onChange,
+function AnchorRow({
+  anchor,
+  answer,
 }: {
-  value: StrengthLevel
-  onChange: (v: StrengthLevel) => void
+  anchor: AnchorPair
+  answer: AnchorAnswer | undefined
 }): JSX.Element {
+  const answerAnchor = useStore((s) => s.answerAnchor)
+  const skipAnchor = useStore((s) => s.skipAnchor)
+  const setHovered = useStore((s) => s.setHovered)
+
   return (
-    <div style={{ display: 'flex', gap: 3 }}>
-      {STRENGTH_LABELS.map((label, i) => (
-        <button
-          key={label}
-          onClick={() => onChange(i as StrengthLevel)}
-          style={{
-            flex: 1,
-            padding: '4px 2px',
-            fontSize: 10,
-            borderRadius: 3,
-            cursor: 'pointer',
-            font: 'inherit',
-            fontWeight: value === i ? 600 : 400,
-            border: `1px solid ${value === i ? 'var(--text-dim)' : 'var(--border)'}`,
-            background: value === i ? 'var(--panel)' : 'transparent',
-            color: value === i ? 'var(--text)' : 'var(--text-dim)',
-          }}
-        >
-          {label}
-        </button>
-      ))}
+    <div
+      onMouseEnter={() => answer && setHovered(answer.answerId)}
+      onMouseLeave={() => answer && setHovered(null)}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 5,
+        padding: answer ? '8px 10px 10px' : '5px 8px',
+        margin: answer ? '4px 0' : 0,
+        border: answer ? '1px solid var(--border)' : 'none',
+        borderRadius: answer ? 'var(--radius)' : 4,
+        background: answer ? 'var(--bg)' : 'transparent',
+        opacity: answer ? 1 : 0.7,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ flex: 1, fontSize: 12 }}>{anchor.prompt}</span>
+        {!answer && <ImmutabilityPip v={anchor.immutability} />}
+        <span style={{ fontSize: 9, color: 'var(--text-dim)' }}>optional</span>
+        {answer && (
+          <button onClick={() => skipAnchor(anchor.id)} title="Remove" style={iconBtn}>
+            ×
+          </button>
+        )}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+        {anchor.options.map((o) => {
+          const selected = answer?.optionId === o.id
+          return (
+            <button
+              key={o.id}
+              onClick={() => answerAnchor(anchor.id, o.id)}
+              style={{
+                padding: '4px 9px',
+                fontSize: 11,
+                borderRadius: 4,
+                cursor: 'pointer',
+                font: 'inherit',
+                fontWeight: selected ? 600 : 400,
+                border: `1px solid ${selected ? 'var(--text-dim)' : 'var(--border)'}`,
+                background: selected ? 'var(--panel)' : 'transparent',
+                color: selected ? 'var(--text)' : 'var(--text-dim)',
+              }}
+            >
+              {o.label}
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }

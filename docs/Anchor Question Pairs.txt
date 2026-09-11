@@ -1,0 +1,17 @@
+
+
+Demographic
+   Assigned Male Sex at birth -- Assigned Female Sex at birth (Demographic)
+   Birth Decade -- 1980 -- 1990 -- 2000 ---2010-- etc
+   Created Child -- Has not created Child
+
+
+Geographic
+  Citizen of Country other than Birth Country -- Only Citizen of birth Country
+  Has purchased home before -- Has never purchased home
+  Has left home country -- Has never left home country
+
+Associative
+  Broken Bone -- Never broken Bone
+  Joined Formal Religion - Not joined formal Religion
+  Has been employed - Has not been employed

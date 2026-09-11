@@ -1,15 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import { parseProfile, serializeProfile } from './validate'
 import { CURRENT_SCHEMA_VERSION } from './migrate'
-import { LIBRARY } from './library'
-import type { MosaicProfile } from './types'
+import { ANCHORS, LIBRARY } from './library'
+import type { LeanIndex, MosaicProfile } from './types'
+import { strengthFromLean } from './types'
 import { DEFAULT_LAYOUT } from '../layout/polar'
 import { DEFAULT_RENDER, DEFAULT_SOLVER } from '../state/store'
 
 function sample(): MosaicProfile {
   const pairs = LIBRARY.slice(0, 4)
   return {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     kind: 'cultural-mosaic-profile',
     id: 'mosaic.test',
     title: 'Test mosaic',
@@ -17,13 +18,20 @@ function sample(): MosaicProfile {
     updatedAt: '2026-01-01T00:00:00.000Z',
     appVersion: '0.1.0',
     pairs: [...pairs],
-    answers: pairs.map((p, i) => ({
-      answerId: `a${i}`,
-      pairId: p.id,
-      leanIndex: (i % 7) as 0 | 1 | 2 | 3 | 4 | 5 | 6,
-      strength: 2,
-      addedAt: i,
-    })),
+    answers: pairs.map((p, i) => {
+      const leanIndex = (i % 7) as LeanIndex
+      return {
+        answerId: `a${i}`,
+        pairId: p.id,
+        leanIndex,
+        // Strength is derived from lean, never independent -- so a round-trip fixture
+        // has to be internally consistent or "unchanged" is not a meaningful claim.
+        strength: strengthFromLean(leanIndex),
+        addedAt: i,
+      }
+    }),
+    anchors: [],
+    anchorAnswers: [],
     layout: DEFAULT_LAYOUT,
     solver: DEFAULT_SOLVER,
     render: DEFAULT_RENDER,
@@ -61,6 +69,21 @@ describe('round trip', () => {
     if (!back.ok) return
     expect(back.profile.answers[0]!.immutabilityOverride).toBe(0.42)
     expect(back.profile.answers[1]!.immutabilityOverride).toBeUndefined()
+  })
+
+  it('round-trips an anchor answer', () => {
+    const p = sample()
+    const anchor = ANCHORS[0]!
+    p.anchors = [anchor]
+    p.anchorAnswers = [
+      { answerId: 'anc-1', anchorId: anchor.id, optionId: anchor.options[0]!.id, addedAt: 0 },
+    ]
+    const back = parseProfile(JSON.parse(serializeProfile(p)))
+    expect(back.ok).toBe(true)
+    if (!back.ok) return
+    expect(back.warnings).toEqual([])
+    expect(back.profile.anchors).toHaveLength(1)
+    expect(back.profile.anchorAnswers).toEqual(p.anchorAnswers)
   })
 })
 
@@ -121,7 +144,7 @@ describe('liberal reading', () => {
     expect(r.profile.answers).toHaveLength(1)
   })
 
-  it('clamps a wild lean or strength into range', () => {
+  it('clamps a wild lean into range, and derives strength from the clamped value', () => {
     const p = sample() as unknown as Record<string, unknown>
     p['answers'] = [
       { answerId: 'a', pairId: LIBRARY[0]!.id, leanIndex: 99, strength: -4, addedAt: 0 },
@@ -130,7 +153,9 @@ describe('liberal reading', () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.profile.answers[0]!.leanIndex).toBe(6)
-    expect(r.profile.answers[0]!.strength).toBe(0)
+    // The stored strength (-4) is never trusted; leanIndex 6 is an extreme, so it
+    // derives to Core regardless of what the file claimed.
+    expect(r.profile.answers[0]!.strength).toBe(3)
   })
 
   it('drops a duplicate answer for the same pair', () => {

@@ -53,6 +53,21 @@ export interface SolverConfig {
    */
   readonly filterRadius: number
   readonly moveLimit: number
+  /**
+   * Lowest volume fraction SIMP is allowed to be driven to, as a fraction of the domain.
+   * Pass the seed's measured tile coverage. Ignored by BESO.
+   *
+   * SIMP cannot recover from disconnecting the domain: a load with no path to an anchor
+   * contributes exactly zero to every element's sensitivity, so there is no gradient
+   * that would rebuild the bridge it just removed. Measured on the sample profile at the
+   * 96 grid, the cliff is sharp and sits exactly at tile coverage -- a target of 0.347
+   * converges cleanly with every load carried, while 0.31 and 0.29 both strand ten of
+   * sixteen loads by iteration 30 and then sit frozen at volume 0.321 for the remaining
+   * ninety iterations. BESO has no such floor because its evolutionary schedule removes
+   * the globally least-useful elements from a nearly solid field and never thins the
+   * bridges to nothing in the first place.
+   */
+  readonly volumeFloor?: number
 }
 
 export type SolverRequest =

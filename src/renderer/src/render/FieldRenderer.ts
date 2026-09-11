@@ -24,8 +24,6 @@ export interface FieldFrame {
   readonly kappa: Float32Array
   /** n*n; 0 outside the disc. */
   readonly mask: Uint8Array
-  /** Optional: the seed density, drawn as a faint trace of what eroded away. */
-  readonly ghost?: Float32Array
 }
 
 export class FieldRenderer {
@@ -61,14 +59,13 @@ export class FieldRenderer {
    * Compose one frame. Everything is blended in linear light; see tone.ts.
    */
   draw(frame: FieldFrame, cfg: RenderConfig): void {
-    const { n, density, hue, kappa, mask, ghost } = frame
+    const { n, density, hue, kappa, mask } = frame
     this.ensure(n)
     const img = this.img!
     const px = img.data
     const theme = THEMES[cfg.theme]
     const [bgR, bgG, bgB] = theme.bgLinear
     const rgb = this.rgb
-    const useGhost = cfg.showGhost && ghost !== undefined
 
     /**
      * ImageData row 0 is the TOP of the image, but the grid's ey increases with +y
@@ -89,32 +86,7 @@ export class FieldRenderer {
         let b = bgB
 
         if (mask[i]) {
-          const a = smoothstep(cfg.solidLo, cfg.solidHi, density[i]!)
-
-          // The ghost layer -- Proposition 3(c). Compliance minimization exists to
-          // eliminate structural redundancy, but the paper holds that structurally
-          // redundant identities are real and are what make behaviour unpredictable.
-          // The optimizer is therefore, by construction, most hostile to exactly the
-          // part of the theory that is hardest to visualize. Drawing the eroded
-          // material as a faint trace shows both the optimized structure (concordant,
-          // load-bearing) and the ghost of what was removed (independent,
-          // unpredictable) in a single image.
-          let ga = 0
-          if (useGhost) {
-            const seeded = smoothstep(cfg.solidLo, cfg.solidHi, ghost![i]!)
-            ga = Math.max(0, seeded - a) * theme.ghostAlpha
-          }
-
-          /**
-           * Ghost UNDER, live material OVER, same hue: two source-over composites of
-           * one colour collapse to a single composite at this effective coverage.
-           *
-           * The previous `sat = a / total` form was algebraically the IDENTITY --
-           * sat * min(1, total) equals a exactly whenever total <= 1 -- so the ghost
-           * toggle drew nothing at all on either theme, and in the total > 1 branch it
-           * made the surviving material paler, which is backwards.
-           */
-          const aEff = a + ga * (1 - a)
+          const aEff = smoothstep(cfg.solidLo, cfg.solidHi, density[i]!)
           if (aEff > 0) {
             // Conviction -> saturation, faded toward the BACKGROUND rather than toward
             // black, so a weakly-held identity is a faint tint of its own colour on
@@ -144,7 +116,7 @@ export class FieldRenderer {
     if (cfg.edgeAccent > 0) this.applyEdgeAccent(frame, cfg, theme, px)
 
     this.fieldCtx.putImageData(img, 0, 0)
-    this.blit(cfg)
+    this.blit()
   }
 
   /**
@@ -199,15 +171,14 @@ export class FieldRenderer {
    *
    * `imageSmoothingEnabled = false` at an integer scale factor is mathematically exact
    * nearest-neighbour: perfectly hard-edged tiles, honouring the mosaic metaphor and the
-   * app's name. Smoothing on gives the organic truss reading instead. Two aesthetics for
-   * one boolean.
+   * app's name. This used to be one of two aesthetics behind a toggle; the smooth
+   * alternative is gone; every tile boundary in this app is now always hard-edged.
    */
-  private blit(cfg: RenderConfig): void {
+  private blit(): void {
     const ctx = this.displayCtx
     const w = this.display.width
     const h = this.display.height
-    ctx.imageSmoothingEnabled = cfg.upscale === 'smooth'
-    if (cfg.upscale === 'smooth') ctx.imageSmoothingQuality = 'high'
+    ctx.imageSmoothingEnabled = false
     ctx.clearRect(0, 0, w, h)
     ctx.drawImage(this.field as CanvasImageSource, 0, 0, w, h)
   }

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../state/store'
-import { placeAnswers } from '../layout/polar'
+import { placeAnswers, tileGeometry } from '../layout/polar'
 import { buildFields, createFields, createGrid } from '../layout/fields'
 import type { Grid, MosaicFields } from '../layout/fields'
 import { buildBoundary } from '../layout/boundary'
 import type { BoundaryConditions } from '../layout/boundary'
 import { ANTAGONISMS } from '../domain/library'
-import { LEAN_NOTCHES } from '../domain/types'
+import { LEAN_NOTCHES, STRENGTH_LABELS } from '../domain/types'
 import type { PlacedTile } from '../domain/types'
 import { FieldRenderer, snapToCells } from '../render/FieldRenderer'
 import { OverlayRenderer } from '../render/OverlayRenderer'
@@ -15,6 +15,8 @@ import { FREE, SOLID_PASSIVE, VOID_PASSIVE } from '../solver/protocol'
 import { deriveVolumeFraction } from '../layout/fields'
 import { exportPng } from '../render/export-png'
 import { THEMES } from '../render/tone'
+import { assignTerritory, createTerritory } from '../render/territory'
+import type { TerritoryBuffers } from '../render/territory'
 
 /**
  * Two stacked canvases and ONE rAF loop.
@@ -38,6 +40,7 @@ export default function MosaicCanvas(): JSX.Element {
   const fieldRef = useRef<HTMLCanvasElement>(null)
   const overlayRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const tipRef = useRef<HTMLDivElement>(null)
 
   // Low-frequency UI state only. Never touched from the frame path.
   const [readout, setReadout] = useState<{
@@ -74,6 +77,16 @@ export default function MosaicCanvas(): JSX.Element {
     let sizeDirty = true
     let phase = 0
     let raf = 0
+    let territory: TerritoryBuffers | null = null
+
+    /** Cursor position within the wrap, and which answer is under it. */
+    const cursor: { px: number; py: number; answerId: string | null } = {
+      px: 0,
+      py: 0,
+      answerId: null,
+    }
+    let tipDirty = false
+
     /** True once a run has produced frames, so the seed is not redrawn over them. */
     let showingSolverOutput = false
 
@@ -115,6 +128,8 @@ export default function MosaicCanvas(): JSX.Element {
         {
           mode: s.solver.mode,
           volumeFraction: vf,
+          // Measured tile coverage: SIMP must not be driven below it.
+          volumeFloor: derived.fields.supportFraction,
           penalty: s.solver.penalty,
           filterRadius: s.solver.filterRadius,
           moveLimit: s.solver.moveLimit,
@@ -161,12 +176,12 @@ export default function MosaicCanvas(): JSX.Element {
               hue: derived.fields.hue,
               kappa: derived.fields.kappa,
               mask: derived.fields.grid.mask,
-              ...(s.render.showGhost ? { ghost: derived.fields.rho0 } : {}),
             },
             s.render,
             {
               size: detail.size,
-              includeScaffolding: s.render.showScaffolding,
+              includeOverlay:
+                s.render.showScaffolding || s.render.showAnchorLabels || s.render.showPoleLabels,
               tiles: derived.tiles,
               synthetics: derived.bc.syntheticAnchors,
               rimRadius: s.layout.rimRadius,
@@ -190,15 +205,24 @@ export default function MosaicCanvas(): JSX.Element {
       if (!grid || gridSize !== s.layout.gridSize) {
         gridSize = s.layout.gridSize
         grid = createGrid(gridSize, s.layout.rimRadius)
+        territory = createTerritory(grid.count)
         derived = null
         sizeDirty = true
       }
       const pairs = s.allPairs()
-      const tiles = placeAnswers({ answers: s.answers, pairs, layout: s.layout })
+      const anchors = s.allAnchors()
+      const tiles = placeAnswers({
+        answers: s.answers,
+        pairs,
+        anchorAnswers: s.anchorAnswers,
+        anchors,
+        layout: s.layout,
+      })
       const fields = derived?.fields ?? createFields(grid)
       buildFields(fields, tiles, {
         filterRadius: s.solver.filterRadius,
         volumeFraction: s.solver.volumeFraction,
+        antagonisms: ANTAGONISMS,
       })
       const leanByPair = new Map<string, number>()
       for (const a of s.answers) leanByPair.set(a.pairId, LEAN_NOTCHES[a.leanIndex] ?? 0)
@@ -287,20 +311,70 @@ export default function MosaicCanvas(): JSX.Element {
        * nothing marks the canvas dirty again, so it stays wrong until the next edit.
        */
       if (showingSolverOutput && session.fieldDirty && session.latestFrame && derived) {
+        /**
+         * Assign each piece of solver-built material to exactly one answer's exact
+         * colour -- never a blend of two -- so a strut leaving a tile reads as that
+         * tile's own chocolate broken into squares, not as a grey scaffold holding
+         * coloured tiles, and not as two colours melted together where tiles meet.
+         * Tiles themselves are sources and never change. See render/territory.ts.
+         */
+        let frameHue = derived.fields.hue
+        let frameKappa = derived.fields.kappa
+        if (territory) {
+          assignTerritory(
+            derived.fields.grid,
+            derived.tiles,
+            derived.fields.hue,
+            derived.fields.kappa,
+            derived.fields.provenance,
+            session.latestFrame.density,
+            {
+              solidLo: s.render.solidLo,
+              pitch: tileGeometry(derived.tiles.length, s.layout).pitch,
+            },
+            territory,
+          )
+          frameHue = territory.hue
+          frameKappa = territory.kappa
+        }
         renderer.draw(
           {
             n: derived.fields.grid.n,
             density: session.latestFrame.density,
-            hue: derived.fields.hue,
-            kappa: derived.fields.kappa,
+            hue: frameHue,
+            kappa: frameKappa,
             mask: derived.fields.grid.mask,
-            ...(s.render.showGhost ? { ghost: derived.fields.rho0 } : {}),
           },
           s.render,
         )
         session.fieldDirty = false
         phase++
-        if (s.render.showScaffolding) overlayDirty = true
+        if (s.render.showScaffolding || s.render.showAnchorLabels || s.render.showPoleLabels)
+          overlayDirty = true
+      }
+
+      // The tooltip is driven straight from the loop -- textContent and transform, no
+      // setState. Hover moves at cursor speed, and a setState per mousemove would
+      // re-render the tree the canvases live in; see this file's header.
+      const tip = tipRef.current
+      if (tip && tipDirty) {
+        const hoveredTile =
+          cursor.answerId === null || !derived
+            ? null
+            : derived.tiles.find((t) => t.answerId === cursor.answerId)
+        if (hoveredTile) {
+          const strength = STRENGTH_LABELS[
+            useStore.getState().answers.find((a) => a.answerId === hoveredTile.answerId)?.strength ?? 0
+          ]
+          tip.textContent = `${hoveredTile.activePole} · ${strength}`
+          tip.hidden = false
+          // Offset from the cursor rather than centred on it, so the tooltip never sits
+          // under the pointer and flickers the hit test.
+          tip.style.transform = `translate(${cursor.px + 14}px, ${cursor.py + 14}px)`
+        } else {
+          tip.hidden = true
+        }
+        tipDirty = false
       }
 
       if (overlayDirty && derived) {
@@ -320,9 +394,70 @@ export default function MosaicCanvas(): JSX.Element {
       raf = requestAnimationFrame(loop)
     }
 
+    /**
+     * Canvas hit testing.
+     *
+     * Reads `provenance`, which is exact: with tiles claiming disjoint lattice cells,
+     * every element either belongs to exactly one answer or to none, so a gutter or an
+     * empty region correctly reports "nothing here" instead of guessing at the nearest
+     * tile. It is also fixed at seed time, so hover keeps working identically after a
+     * run, when the density field on screen is the optimizer's output rather than the
+     * seed.
+     *
+     * Uses the canvas bounding rect rather than the renderer's cellPx, so it stays
+     * correct under any CSS scaling without having to track the layout maths twice.
+     */
+    const hitTest = (clientX: number, clientY: number): string | null => {
+      if (!derived || !grid) return null
+      const rect = fieldCanvas.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return null
+      const fx = (clientX - rect.left) / rect.width
+      const fy = (clientY - rect.top) / rect.height
+      if (fx < 0 || fx >= 1 || fy < 0 || fy >= 1) return null
+      const ex = Math.floor(fx * grid.n)
+      // Canvas row 0 is the TOP; the grid's ey increases upward. Same flip as the
+      // renderer, and getting it wrong mirrors the hit test about the horizontal axis --
+      // which looks plausible on a roughly symmetric picture.
+      const ey = grid.n - 1 - Math.floor(fy * grid.n)
+      const owner = derived.fields.provenance[ey * grid.n + ex]
+      if (owner === undefined || owner < 0) return null
+      return derived.tiles[owner]?.answerId ?? null
+    }
+
+    const onMouseMove = (ev: MouseEvent): void => {
+      const wrapRect = wrap.getBoundingClientRect()
+      cursor.px = ev.clientX - wrapRect.left
+      cursor.py = ev.clientY - wrapRect.top
+      const id = hitTest(ev.clientX, ev.clientY)
+      // Always reposition, but only touch the store when the ANSWER changes: the store
+      // write drives the overlay's hover ring, and doing it per mousemove would redraw
+      // the overlay on every pixel of travel.
+      tipDirty = true
+      if (id !== cursor.answerId) {
+        cursor.answerId = id
+        useStore.getState().setHovered(id)
+      }
+    }
+
+    const onMouseLeave = (): void => {
+      if (cursor.answerId !== null) {
+        cursor.answerId = null
+        useStore.getState().setHovered(null)
+      }
+      tipDirty = true
+    }
+
+    wrap.addEventListener('mousemove', onMouseMove)
+    wrap.addEventListener('mouseleave', onMouseLeave)
+
     // Non-React subscriptions: mark dirty, never setState.
     const unsubAnswers = useStore.subscribe((s, prev) => {
-      if (s.answers !== prev.answers || s.customPairs !== prev.customPairs) seedDirty = true
+      if (
+        s.answers !== prev.answers ||
+        s.anchorAnswers !== prev.anchorAnswers ||
+        s.customPairs !== prev.customPairs
+      )
+        seedDirty = true
       if (s.layout !== prev.layout || s.solver !== prev.solver) seedDirty = true
       if (s.render !== prev.render) {
         seedDirty = true
@@ -342,6 +477,8 @@ export default function MosaicCanvas(): JSX.Element {
       cancelAnimationFrame(raf)
       unsubAnswers()
       ro.disconnect()
+      wrap.removeEventListener('mousemove', onMouseMove)
+      wrap.removeEventListener('mouseleave', onMouseLeave)
       window.removeEventListener('mosaic:run', onRun)
       window.removeEventListener('mosaic:reset', onReset)
       window.removeEventListener('mosaic:export', onExport)
@@ -381,6 +518,27 @@ export default function MosaicCanvas(): JSX.Element {
             style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
           />
         </div>
+        <div
+          ref={tipRef}
+          data-mosaic-tip
+          hidden
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            pointerEvents: 'none',
+            padding: '3px 7px',
+            borderRadius: 3,
+            border: '1px solid var(--border)',
+            background: 'var(--panel)',
+            color: 'var(--text)',
+            fontSize: 11,
+            lineHeight: 1.3,
+            whiteSpace: 'nowrap',
+            // Above both canvases, and out of the way of the status strip.
+            zIndex: 2,
+          }}
+        />
       </div>
       <StatusStrip readout={readout} themeHex={t.dimHex} inkHex={t.inkHex} />
     </div>

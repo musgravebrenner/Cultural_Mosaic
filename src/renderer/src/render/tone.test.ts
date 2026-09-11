@@ -280,7 +280,9 @@ describe('theme tokens agree with the stylesheet', () => {
   it('gives paper stronger guide alphas than ink at every site', () => {
     // L* is a cube-root curve, so the same alpha is a much smaller perceptual step on
     // cream than on near-black; without a boost every scaffolding mark is invisible.
-    const keys = ['ring', 'rim', 'divider', 'arc', 'label', 'legend'] as const
+    // 'label' and 'legend' are gone: both label groups now halo instead of tint, so
+    // their contrast comes from the halo, not from a theme-tuned alpha.
+    const keys = ['ring', 'rim', 'divider', 'arc'] as const
     for (const k of keys) {
       expect(THEMES.paper.guide[k], k).toBeGreaterThan(THEMES.ink.guide[k])
       expect(THEMES.paper.guide[k], k).toBeLessThanOrEqual(1)

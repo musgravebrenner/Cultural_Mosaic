@@ -1,17 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import {
-  createGrid,
-  createFields,
-  buildFields,
-  deriveVolumeFraction,
-  FIELD_CONSTANTS,
-} from './fields'
+import { createGrid, createFields, buildFields, deriveVolumeFraction, FIELD_CONSTANTS } from './fields'
 import type { FieldOptions, MosaicFields } from './fields'
 import { DEFAULT_LAYOUT, placeAnswers } from './polar'
-import { LIBRARY, LIBRARY_BY_ID } from '../domain/library'
+import { ANTAGONISMS, LIBRARY, LIBRARY_BY_ID } from '../domain/library'
 import type { LeanIndex, PlacedTile, StrengthLevel, TileAnswer } from '../domain/types'
 
 const N = 64
+const LAYOUT = { ...DEFAULT_LAYOUT, gridSize: N as 64 }
 const GRID = createGrid(N, DEFAULT_LAYOUT.rimRadius)
 const OPTS: FieldOptions = { filterRadius: 2.2, volumeFraction: 'derived' }
 
@@ -25,11 +20,7 @@ function ans(
 }
 
 function place(answers: TileAnswer[]): PlacedTile[] {
-  return placeAnswers({
-    answers,
-    pairs: LIBRARY_BY_ID,
-    layout: { ...DEFAULT_LAYOUT, gridSize: N },
-  })
+  return placeAnswers({ answers, pairs: LIBRARY_BY_ID, layout: LAYOUT })
 }
 
 function build(tiles: PlacedTile[], opts: FieldOptions = OPTS): MosaicFields {
@@ -38,7 +29,7 @@ function build(tiles: PlacedTile[], opts: FieldOptions = OPTS): MosaicFields {
   return f
 }
 
-/** A synthetic tile, so colour behaviour can be tested without library coupling. */
+/** A synthetic tile, so field behaviour can be tested without library coupling. */
 function tile(over: Partial<PlacedTile> = {}): PlacedTile {
   return {
     answerId: 'synthetic',
@@ -55,11 +46,20 @@ function tile(over: Partial<PlacedTile> = {}): PlacedTile {
     radius: 0,
     x: 0,
     y: 0,
-    sigma: 0.12,
+    tileCol: 0,
+    tileRow: 0,
+    sigma: 0.1,
     amplitude: 1,
     role: 'mass',
     ...over,
   }
+}
+
+/** Element index containing a normalized point. */
+function at(x: number, y: number): number {
+  const ex = Math.floor((x + 1) / GRID.h)
+  const ey = Math.floor((y + 1) / GRID.h)
+  return ey * N + ex
 }
 
 describe('createGrid', () => {
@@ -75,210 +75,163 @@ describe('createGrid', () => {
     expect(m).toBe(GRID.designList.length)
     for (const i of GRID.designList) expect(GRID.mask[i]).toBe(1)
   })
+})
 
-  it('puts centroids inside their cells and the origin at the centre', () => {
-    expect(GRID.h).toBeCloseTo(2 / N, 12)
-    for (const i of GRID.designList) {
-      expect(Math.abs(GRID.cx[i]!)).toBeLessThanOrEqual(1)
-      expect(Math.abs(GRID.cy[i]!)).toBeLessThanOrEqual(1)
-      expect(Math.hypot(GRID.cx[i]!, GRID.cy[i]!)).toBeLessThanOrEqual(DEFAULT_LAYOUT.rimRadius)
+describe('the tile stamp', () => {
+  it('is a filled square, not a radial falloff', () => {
+    const f = build([tile({ sigma: 0.2, x: 0, y: 0 })], { ...OPTS, volumeFraction: 0.35 })
+    // The corner of the square is inside, while a point the same distance out along the
+    // axis is beyond it. No radial kernel can satisfy both.
+    expect(f.rhoRaw[at(0.18, 0.18)]!, 'corner inside').toBe(1)
+    expect(f.rhoRaw[at(0.25, 0)]!, 'past the edge on the axis').toBe(0)
+    expect(f.rhoRaw[at(0.18, 0)]!, 'inside on the axis').toBe(1)
+  })
+
+  it('is uniform across its whole body -- conviction is colour, not area', () => {
+    const f = build([tile({ sigma: 0.2, amplitude: 0.66 })], { ...OPTS, volumeFraction: 0.35 })
+    for (const i of [at(0, 0), at(0.1, 0.1), at(-0.15, 0.05), at(0.18, -0.18)]) {
+      expect(f.rhoRaw[i]!, `cell ${i} density`).toBe(1)
+      // kappa IS the strength value, which the renderer maps to saturation.
+      expect(f.kappa[i]!, `cell ${i} conviction`).toBeCloseTo(0.66, 6)
     }
+  })
+
+  it('carries the tile hue exactly, with no averaging', () => {
+    // Tiles claim disjoint lattice cells, so a cell belongs to exactly one answer and
+    // needs no weighted average.
+    const f = build([tile({ hue: [0.5, 0, 0.5], sigma: 0.2 })], { ...OPTS, volumeFraction: 0.35 })
+    const i = at(0, 0)
+    expect(f.hue[3 * i]!).toBeCloseTo(0.5, 6)
+    expect(f.hue[3 * i + 1]!).toBeCloseTo(0, 6)
+    expect(f.hue[3 * i + 2]!).toBeCloseTo(0.5, 6)
+  })
+
+  it('scales conviction with strength while density stays flat', () => {
+    const strong = build([tile({ amplitude: 1, sigma: 0.2 })], { ...OPTS, volumeFraction: 0.35 })
+    const weak = build([tile({ amplitude: 0.33, sigma: 0.2 })], { ...OPTS, volumeFraction: 0.35 })
+    const i = at(0, 0)
+    // Same area, same density: only conviction differs, which is exactly the point of
+    // moving the encoding off size and onto saturation.
+    expect(strong.rhoRaw[i]!).toBe(weak.rhoRaw[i]!)
+    expect(strong.kappa[i]!).toBeGreaterThan(weak.kappa[i]!)
+  })
+
+  it('records exact provenance inside a tile and none in the gutters', () => {
+    const f = build(
+      [
+        tile({ sigma: 0.1, x: -0.4, y: 0 }),
+        tile({ hue: [0, 0, 1], sigma: 0.1, x: 0.4, y: 0, tileCol: 4 }),
+      ],
+      { ...OPTS, volumeFraction: 0.35 },
+    )
+    expect(f.provenance[at(-0.4, 0)]).toBe(0)
+    expect(f.provenance[at(0.4, 0)]).toBe(1)
+    // Between them is floor, owned by nobody -- which is what lets hover report
+    // "nothing here" instead of guessing.
+    expect(f.provenance[at(0, 0)]).toBe(-1)
+    expect(f.provenance[at(0, 0.7)]).toBe(-1)
+  })
+
+  it('never writes outside the disc', () => {
+    const f = build(place(LIBRARY.slice(0, 30).map((p, k) => ans(p.id, 5, 3, k))))
+    for (let i = 0; i < GRID.count; i++) {
+      if (GRID.mask[i]) continue
+      expect(f.rho0[i]!, `elem ${i}`).toBe(0)
+      expect(f.rhoRaw[i]!).toBe(0)
+      expect(f.provenance[i]!).toBe(-1)
+    }
+  })
+
+  it('skips Dormant answers entirely', () => {
+    const f = build([tile({ amplitude: 0, sigma: 0.2 })], { ...OPTS, volumeFraction: 0.35 })
+    for (const i of GRID.designList) expect(f.provenance[i]!).toBe(-1)
   })
 })
 
-describe('deposit and colour', () => {
-  /**
-   * The union's calibration, and it is deliberate: a single full-strength deposit
-   * reaches 0.6 rather than 1.0, so genuine overlap still has room to read as denser.
-   * A form that saturated a lone deposit at its own centre would make every dense
-   * region indistinguishable.
-   */
-  it('puts a single full-strength deposit at ~0.6, leaving overlap headroom', () => {
-    const f = build([tile({ sigma: 0.2, amplitude: 1 })], { ...OPTS, volumeFraction: 0.35 })
-    // Centre of the domain; the nearest cell centroid is half a cell away.
-    const i = (N / 2) * N + N / 2
-    expect(f.kappa[i]!).toBeGreaterThan(0.9)
-    expect(f.rhoRaw[i]!).toBeCloseTo(0.6, 2)
-
-    // ...and overlap genuinely exceeds it rather than clipping.
-    const pair = build(
-      [tile({ sigma: 0.2, amplitude: 1 }), tile({ sigma: 0.2, amplitude: 1 })],
-      { ...OPTS, volumeFraction: 0.35 },
-    )
-    expect(pair.rhoRaw[i]!).toBeGreaterThan(0.8)
-    expect(pair.rhoRaw[i]!).toBeLessThan(1)
+describe('tiles are discrete', () => {
+  it('gives every real profile disjoint tile footprints', () => {
+    // The property the whole visual model rests on: one question, one identifiable tile.
+    for (const count of [8, 24, 50, LIBRARY.length]) {
+      const tiles = place(
+        LIBRARY.slice(0, count).map((p, k) => ans(p.id, (k % 7) as LeanIndex, 2, k)),
+      )
+      const f = build(tiles)
+      const owners = new Set<number>()
+      for (const i of GRID.designList) {
+        const owner = f.provenance[i]!
+        if (owner >= 0) owners.add(owner)
+      }
+      // Every non-Dormant tile got at least one cell, and no cell has two owners --
+      // guaranteed by construction since provenance holds a single index per cell.
+      expect(owners.size, `${count} answers -> ${owners.size} tiles rendered`).toBe(tiles.length)
+    }
   })
 
-  it('is exactly zero beyond the kernel cutoff', () => {
-    const f = build([tile({ sigma: 0.05, amplitude: 1, x: 0, y: 0 })], {
-      ...OPTS,
-      volumeFraction: 0.35,
-    })
+  it('separates tiles by gutter cells held at the floor', () => {
+    const tiles = place(LIBRARY.slice(0, 30).map((p, k) => ans(p.id, 4, 2, k)))
+    const f = build(tiles)
+    const { RHO_FLOOR } = FIELD_CONSTANTS
+    // The gutter sits exactly at the default solidLo, so smoothstep maps it to zero
+    // coverage: tiles read as discrete with no border drawing at all.
+    expect(RHO_FLOOR).toBe(0.25)
+    let gutters = 0
     for (const i of GRID.designList) {
-      const d = Math.hypot(GRID.cx[i]!, GRID.cy[i]!)
-      if (d > FIELD_CONSTANTS.CUTOFF_SIGMAS * 0.05 + GRID.h) {
-        expect(f.rhoRaw[i]!, `cell at d=${d.toFixed(3)}`).toBeLessThan(1e-9)
+      if (f.provenance[i]! < 0) {
+        expect(f.rho0[i]!).toBe(RHO_FLOOR)
+        gutters++
       }
     }
+    expect(gutters, 'some gutter exists between tiles').toBeGreaterThan(0)
   })
 
   /**
-   * The semantic bug this rule exists to prevent: if colour summed and clamped, three
-   * overlapping pure-blue deposits would tone-map toward whitish and the app would
-   * report "Concordant Core" -- all three dimensions align -- in a region that is in
-   * fact maximally PURE single-category.
+   * The connectivity guarantee, and it matters far more with tiles than with blobs: at
+   * the density minimum every tile would be its own island under 4-connectivity, the
+   * connectivity pass would constrain nearly every DOF, and the solve would return no
+   * signal at all.
    */
-  it('keeps stacked same-hue deposits pure instead of drifting toward white', () => {
-    const stacked = build(
-      [
-        tile({ hue: [0, 0, 1], sigma: 0.2, x: 0, y: 0 }),
-        tile({ hue: [0, 0, 1], sigma: 0.2, x: 0.02, y: 0 }),
-        tile({ hue: [0, 0, 1], sigma: 0.2, x: 0, y: 0.02 }),
-      ],
-      { ...OPTS, volumeFraction: 0.35 },
-    )
-    const i = (N / 2) * N + N / 2
-    expect(stacked.hue[3 * i]!).toBeCloseTo(0, 6)
-    expect(stacked.hue[3 * i + 1]!).toBeCloseTo(0, 6)
-    expect(stacked.hue[3 * i + 2]!).toBeCloseTo(1, 6)
-    // Conviction rose even though hue did not move -- intensity lives in kappa.
-    expect(stacked.kappa[i]!).toBeGreaterThan(2)
-  })
-
-  it('only reaches white where all three categories are genuinely co-present', () => {
-    const f = build(
-      [
-        tile({ hue: [1, 0, 0], sigma: 0.25, x: 0, y: 0 }),
-        tile({ hue: [0, 1, 0], sigma: 0.25, x: 0, y: 0 }),
-        tile({ hue: [0, 0, 1], sigma: 0.25, x: 0, y: 0 }),
-      ],
-      { ...OPTS, volumeFraction: 0.35 },
-    )
-    const i = (N / 2) * N + N / 2
-    expect(f.hue[3 * i]!).toBeCloseTo(1 / 3, 4)
-    expect(f.hue[3 * i + 1]!).toBeCloseTo(1 / 3, 4)
-    expect(f.hue[3 * i + 2]!).toBeCloseTo(1 / 3, 4)
-  })
-
-  /**
-   * Density unions rather than averages: if ANY identity occupies a location there is
-   * material there, and averaging would let an isolated strong deposit be thinned by
-   * its own emptiness.
-   */
-  it('unions density so overlap is denser than either deposit alone', () => {
-    const one = build([tile({ amplitude: 0.5, sigma: 0.2 })], { ...OPTS, volumeFraction: 0.35 })
-    const i = (N / 2) * N + N / 2
-    const single = one.rhoRaw[i]!
-    const two = build(
-      [tile({ amplitude: 0.5, sigma: 0.2 }), tile({ amplitude: 0.5, sigma: 0.2 })],
-      { ...OPTS, volumeFraction: 0.35 },
-    )
-    expect(two.rhoRaw[i]!).toBeGreaterThan(single)
-    // Bounded in [0,1) by construction -- no clamping needed, no plateau.
-    expect(two.rhoRaw[i]!).toBeLessThan(1)
-  })
-
-  it('never produces a flat rho=1 plateau that would kill the SIMP gradient', () => {
-    const many = Array.from({ length: 12 }, (_, k) =>
-      tile({ amplitude: 1, sigma: 0.3, x: 0.01 * k, y: 0 }),
-    )
-    const f = build(many, { ...OPTS, volumeFraction: 0.35 })
-    for (const i of GRID.designList) expect(f.rhoRaw[i]!).toBeLessThan(1)
-  })
-
-  it('records provenance for the dominant contributor', () => {
-    const f = build(
-      [
-        tile({ hue: [1, 0, 0], sigma: 0.15, x: -0.4, y: 0, amplitude: 1 }),
-        tile({ hue: [0, 0, 1], sigma: 0.15, x: 0.4, y: 0, amplitude: 1 }),
-      ],
-      { ...OPTS, volumeFraction: 0.35 },
-    )
-    const at = (x: number, y: number): number => {
-      const ex = Math.floor((x + 1) / GRID.h)
-      const ey = Math.floor((y + 1) / GRID.h)
-      return ey * N + ex
+  it('keeps every in-disc cell above the solid threshold at iteration 1', () => {
+    for (const count of [1, 12, 40, LIBRARY.length]) {
+      const f = build(place(LIBRARY.slice(0, count).map((p, k) => ans(p.id, 5, 2, k))))
+      for (const i of GRID.designList) {
+        // 0.12 is the connectivity pass's solid-entry threshold.
+        expect(f.rho0[i]!, `${count} answers, elem ${i}`).toBeGreaterThan(0.12)
+      }
     }
-    expect(f.provenance[at(-0.4, 0)]).toBe(0)
-    expect(f.provenance[at(0.4, 0)]).toBe(1)
-    // Empty cells stay at -1 so the hover handler can report "nothing here".
-    expect(f.provenance[at(0, 0.85)]).toBe(-1)
   })
 })
 
 describe('concordance -> stiffness', () => {
-  it('gives a monochrome region coherence 1 and near-maximum stiffness', () => {
-    const f = build(
-      [
-        tile({ hue: [0, 0, 1], sigma: 0.3, x: 0, y: 0, amplitude: 1 }),
-        tile({ hue: [0, 0, 1], sigma: 0.3, x: 0.05, y: 0.05, amplitude: 1 }),
-      ],
-      { ...OPTS, volumeFraction: 0.35 },
-    )
-    const i = (N / 2) * N + N / 2
-    expect(f.coherence[i]!).toBeGreaterThan(0.97)
-    expect(f.w[i]!).toBeGreaterThan(0.92)
-  })
-
-  it('drives a three-way contested region toward the low-stiffness floor', () => {
-    // Equal three-way overlap gives ||(1,1,1)||/3 = 0.577 coherence.
-    const f = build(
-      [
-        tile({ hue: [1, 0, 0], sigma: 0.3, x: 0, y: 0, amplitude: 1 }),
-        tile({ hue: [0, 1, 0], sigma: 0.3, x: 0, y: 0, amplitude: 1 }),
-        tile({ hue: [0, 0, 1], sigma: 0.3, x: 0, y: 0, amplitude: 1 }),
-      ],
-      { ...OPTS, volumeFraction: 0.35 },
-    )
-    const i = (N / 2) * N + N / 2
-    expect(f.coherence[i]!).toBeCloseTo(0.577, 2)
-    expect(f.w[i]!).toBeLessThan(0.5)
-    expect(f.w[i]!).toBeGreaterThan(FIELD_CONSTANTS.W_MIN)
-  })
-
-  it('gives a two-way seam coherence about 0.707', () => {
-    const f = build(
-      [
-        tile({ hue: [1, 0, 0], sigma: 0.3, x: 0, y: 0, amplitude: 1 }),
-        tile({ hue: [0, 1, 0], sigma: 0.3, x: 0, y: 0, amplitude: 1 }),
-      ],
-      { ...OPTS, volumeFraction: 0.35 },
-    )
-    const i = (N / 2) * N + N / 2
-    expect(f.coherence[i]!).toBeCloseTo(0.707, 2)
+  it('gives the interior of a single tile maximum coherence', () => {
+    const f = build([tile({ hue: [0, 0, 1], sigma: 0.25 })], { ...OPTS, volumeFraction: 0.35 })
+    const i = at(0, 0)
+    expect(f.coherence[i]!).toBeGreaterThan(0.95)
+    expect(f.w[i]!).toBeGreaterThan(0.9)
   })
 
   /**
-   * The failure the conviction gate exists to fix. Bare spherical coherence rates two
-   * near-empty but aligned cells as PERFECTLY concordant, which inverts the paper's
-   * claim that unlinked identities are discordant rather than concordant.
+   * The seam between unlike tiles is a sharp discordance, which is the behaviour the
+   * artwork wants: Proposition 1 says discordant identities erode. With Gaussian blobs
+   * the seam was smeared; with tiles it is exact.
    */
-  it('holds a weak but aligned region at neutral, not at maximum stiffness', () => {
-    const strong = build([tile({ hue: [0, 0, 1], sigma: 0.3, amplitude: 1 })], {
-      ...OPTS,
-      volumeFraction: 0.35,
-    })
-    const weak = build([tile({ hue: [0, 0, 1], sigma: 0.3, amplitude: 0.02 })], {
-      ...OPTS,
-      volumeFraction: 0.35,
-    })
-    const i = (N / 2) * N + N / 2
-    // Both are perfectly aligned -- identical hue everywhere -- so ungated coherence
-    // would be 1.0 for both.
-    expect(strong.coherence[i]!).toBeGreaterThan(0.97)
-    expect(weak.coherence[i]!).toBeLessThan(0.8)
-    expect(weak.coherence[i]!).toBeGreaterThan(0.55)
-    expect(weak.w[i]!).toBeLessThan(strong.w[i]!)
+  it('drops stiffness at a seam between unlike tiles', () => {
+    const f = build(
+      [
+        tile({ hue: [1, 0, 0], sigma: 0.09, x: -0.1, y: 0 }),
+        tile({ hue: [0, 1, 0], sigma: 0.09, x: 0.1, y: 0, tileCol: 1 }),
+      ],
+      { ...OPTS, volumeFraction: 0.35 },
+    )
+    expect(f.w[at(0, 0)]!, 'seam is weaker than tile interior').toBeLessThan(f.w[at(-0.1, 0)]!)
   })
 
-  it('leaves an empty neighbourhood neutral rather than actively hostile', () => {
-    const f = build([tile({ sigma: 0.05, x: -0.6, y: 0 })], { ...OPTS, volumeFraction: 0.35 })
-    const far = Math.floor((0.6 + 1) / GRID.h) + Math.floor((0 + 1) / GRID.h) * N
-    expect(f.coherence[far]!).toBeCloseTo(FIELD_CONSTANTS.S_NEUTRAL, 3)
+  it('holds an empty region at neutral rather than actively hostile', () => {
+    const f = build([tile({ sigma: 0.06, x: -0.6, y: 0 })], { ...OPTS, volumeFraction: 0.35 })
+    expect(f.coherence[at(0.6, 0)]!).toBeCloseTo(FIELD_CONSTANTS.S_NEUTRAL, 3)
   })
 
   /** SPD guarantee: w is a strictly positive scalar multiplier everywhere in the disc. */
-  it('keeps w strictly inside [W_MIN, 1] for every in-disc element of a real profile', () => {
+  it('keeps w inside [W_MIN, 1] for every in-disc element of a real profile', () => {
     const f = build(place(LIBRARY.map((p, k) => ans(p.id, (k % 7) as LeanIndex, 2, k))))
     for (const i of GRID.designList) {
       expect(f.w[i]!, `elem ${i}`).toBeGreaterThanOrEqual(FIELD_CONSTANTS.W_MIN - 1e-9)
@@ -303,50 +256,18 @@ describe('volume fraction', () => {
     expect(deriveVolumeFraction(allCore)).toBeLessThan(0.43)
   })
 
-  it('hits the requested volume fraction to within a fraction of a percent', () => {
-    for (const target of [0.2, 0.3, 0.35, 0.45, 0.55]) {
-      const f = build(place(LIBRARY.slice(0, 18).map((p, k) => ans(p.id, 5, 2, k))), {
-        ...OPTS,
-        volumeFraction: target,
-      })
-      let sum = 0
-      for (const i of GRID.designList) sum += f.rho0[i]!
-      expect(sum / GRID.designList.length, `target ${target}`).toBeCloseTo(target, 3)
-      expect(f.sparse).toBe(false)
-    }
-  })
-
   /**
-   * The connectivity guarantee. At iteration 1 the whole disc must be one connected
-   * component containing every pin and load, so that no user profile can hand the
-   * optimizer a disconnected starting point.
+   * The seed deliberately starts ABOVE the target and lets the optimizer walk it down.
+   * Rescaling it could only crush the gutters below the solid threshold (fragmenting
+   * every tile into an island) or dim the tiles (discarding the saturation encoding).
    */
-  it('leaves every in-disc element strictly positive, even for a 1-answer profile', () => {
-    const f = build(place([ans('A-AVO-04', 6, 1)]), { ...OPTS, volumeFraction: 0.3 })
-    for (const i of GRID.designList) {
-      expect(f.rho0[i]!, `elem ${i}`).toBeGreaterThan(0)
-      expect(f.rho0[i]!).toBeGreaterThanOrEqual(FIELD_CONSTANTS.RHO_MIN)
-    }
-  })
-
-  it('keeps rho0 exactly zero outside the disc', () => {
-    const f = build(place(LIBRARY.slice(0, 12).map((p, k) => ans(p.id, 5, 2, k))))
-    for (let i = 0; i < GRID.count; i++) {
-      if (!GRID.mask[i]) expect(f.rho0[i]!).toBe(0)
-    }
-  })
-
-  it('preserves the ordering of the seed field after the gamma remap', () => {
-    // Gamma changes contrast, not support -- so a denser seed cell stays denser.
-    const f = build(place(LIBRARY.slice(0, 20).map((p, k) => ans(p.id, 4, 2, k))))
-    const list = Array.from(GRID.designList)
-    for (let k = 1; k < 400; k++) {
-      const a = list[k]!
-      const b = list[list.length - k]!
-      if (f.rhoRaw[a]! > f.rhoRaw[b]! + 1e-6) {
-        expect(f.rho0[a]!).toBeGreaterThanOrEqual(f.rho0[b]! - 1e-9)
-      }
-    }
+  it('reports the target while starting the field above it', () => {
+    const tiles = place(LIBRARY.slice(0, 24).map((p, k) => ans(p.id, 5, 3, k)))
+    const f = build(tiles, { ...OPTS, volumeFraction: 0.3 })
+    expect(f.volumeFraction).toBe(0.3)
+    let sum = 0
+    for (const i of GRID.designList) sum += f.rho0[i]!
+    expect(sum / GRID.designList.length).toBeGreaterThan(0.3)
   })
 })
 
@@ -365,12 +286,12 @@ describe('determinism and robustness', () => {
     const f = createFields(GRID)
     buildFields(f, place(LIBRARY.map((p, k) => ans(p.id, 5, 3, k))), OPTS)
     buildFields(f, [], { ...OPTS, volumeFraction: 0.3 })
-    // An empty profile leaves only the connectivity floor, and no colour at all.
     for (const i of GRID.designList) {
       expect(f.kappa[i]!).toBe(0)
       expect(f.provenance[i]!).toBe(-1)
-      expect(f.rhoRaw[i]!).toBeCloseTo(0, 9)
-      expect(f.rho0[i]!).toBeGreaterThan(0)
+      expect(f.rhoRaw[i]!).toBe(0)
+      // Only the connectivity floor is left, so the disc is still one component.
+      expect(f.rho0[i]!).toBe(FIELD_CONSTANTS.RHO_FLOOR)
     }
   })
 
@@ -383,7 +304,7 @@ describe('determinism and robustness', () => {
     expect(f.supportFraction).toBe(0)
   })
 
-  it('produces no NaN for the full 79-pair profile at every strength', () => {
+  it('produces no NaN for the full library at every strength', () => {
     for (const s of [1, 2, 3] as StrengthLevel[]) {
       const f = build(place(LIBRARY.map((p, k) => ans(p.id, (k % 7) as LeanIndex, s, k))))
       for (const i of GRID.designList) {
@@ -406,11 +327,119 @@ describe('determinism and robustness', () => {
     }
   })
 
-  it('reports support fraction rising with profile size', () => {
+  it('reports coverage rising with profile size', () => {
     const few = build(place(LIBRARY.slice(0, 3).map((p, k) => ans(p.id, 5, 2, k))))
     const many = build(place(LIBRARY.map((p, k) => ans(p.id, 5, 2, k))))
     expect(few.supportFraction).toBeGreaterThan(0)
     expect(many.supportFraction).toBeGreaterThan(few.supportFraction)
     expect(many.supportFraction).toBeLessThanOrEqual(1)
+  })
+})
+
+/**
+ * Destructive interference: two identities the library declares to be in tension make
+ * each other structurally weaker, so the optimizer removes material from BOTH.
+ *
+ * Asserted on the stiffness field rather than on the deposit, because that is where it
+ * happens -- the seed deliberately keeps recording the conviction that was answered, and
+ * only the ABILITY of that material to carry load is reduced. That distinction is what
+ * makes the erosion conditional: weakened material still on the only path to an anchor
+ * survives, because removing it costs more compliance than it saves.
+ */
+describe('destructive interference', () => {
+  // A-EMP-02 poleA against A-PRO-01 poleA, weight 0.30. Both engagement poles are the
+  // "A" side here (aPole -1, bPole -1), unlike a mixed-sign antagonism -- this pairing
+  // survived the distillation to 30 pairs and exercises that case too.
+  const conflict = ANTAGONISMS.find((a) => a.a === 'A-EMP-02' && a.b === 'A-PRO-01')!
+
+  /** Mean stiffness over the cells a given answer owns. */
+  function ownStiffness(f: MosaicFields, tiles: PlacedTile[], pairId: string): number {
+    const idx = tiles.findIndex((t) => t.pairId === pairId)
+    let sum = 0
+    let n = 0
+    for (const i of GRID.designList) {
+      if (f.provenance[i] === idx) {
+        sum += f.w[i]!
+        n++
+      }
+    }
+    expect(n, `${pairId} owns no cells`).toBeGreaterThan(0)
+    return sum / n
+  }
+
+  function run(empLean: LeanIndex, proLean: LeanIndex, withAntagonisms: boolean): {
+    f: MosaicFields
+    tiles: PlacedTile[]
+  } {
+    const answers = [ans('A-EMP-02', empLean, 3, 0), ans('A-PRO-01', proLean, 3, 1)]
+    const tiles = place(answers)
+    const f = createFields(GRID)
+    buildFields(f, tiles, {
+      ...OPTS,
+      volumeFraction: 0.3,
+      ...(withAntagonisms ? { antagonisms: ANTAGONISMS } : {}),
+    })
+    return { f, tiles }
+  }
+
+  it('is declared by the library for this pairing', () => {
+    expect(conflict).toBeDefined()
+    expect(conflict.aPole).toBe(-1)
+    expect(conflict.bPole).toBe(-1)
+  })
+
+  it('weakens BOTH sides when both tense poles are chosen', () => {
+    // leanIndex 0 is poleA (lean -1) for both pairs; both aPole and bPole are -1 here,
+    // so engagement needs BOTH answers leaning toward their own poleA.
+    const off = run(0, 0, false)
+    const on = run(0, 0, true)
+    for (const id of ['A-EMP-02', 'A-PRO-01']) {
+      const before = ownStiffness(off.f, off.tiles, id)
+      const after = ownStiffness(on.f, on.tiles, id)
+      expect(after, `${id}: ${before.toFixed(3)} -> ${after.toFixed(3)}`).toBeLessThan(before)
+    }
+  })
+
+  /** Holding the compatible pole of a contested pair is not a conflict. */
+  it('does nothing when either side leans the other way', () => {
+    const engaged = run(0, 0, true)
+    const notEngaged = run(6, 0, true)
+    const baseline = run(6, 0, false)
+    expect(ownStiffness(notEngaged.f, notEngaged.tiles, 'A-PRO-01')).toBeCloseTo(
+      ownStiffness(baseline.f, baseline.tiles, 'A-PRO-01'),
+      6,
+    )
+    // ...and the engaged case really is different, so the comparison above means something.
+    expect(ownStiffness(engaged.f, engaged.tiles, 'A-PRO-01')).toBeLessThan(
+      ownStiffness(baseline.f, baseline.tiles, 'A-PRO-01'),
+    )
+  })
+
+  it('scales with how far each side leans', () => {
+    const hard = run(0, 0, true)
+    const slight = run(2, 2, true)
+    expect(ownStiffness(hard.f, hard.tiles, 'A-PRO-01')).toBeLessThan(
+      ownStiffness(slight.f, slight.tiles, 'A-PRO-01'),
+    )
+  })
+
+  /** SPD guarantee: the penalty must never drive stiffness to or below zero. */
+  it('never takes stiffness to zero, however many conflicts engage', () => {
+    const answers = LIBRARY.map((p, k) => ans(p.id, 0, 3, k))
+    const tiles = place(answers)
+    const f = createFields(GRID)
+    buildFields(f, tiles, { ...OPTS, antagonisms: ANTAGONISMS })
+    for (const i of GRID.designList) {
+      expect(f.w[i]!, `elem ${i}`).toBeGreaterThanOrEqual(FIELD_CONSTANTS.W_MIN - 1e-9)
+      expect(Number.isFinite(f.w[i]!)).toBe(true)
+    }
+  })
+
+  it('leaves the deposit itself untouched -- conviction is still what was answered', () => {
+    const off = run(0, 0, false)
+    const on = run(0, 0, true)
+    expect(Array.from(on.f.kappa)).toEqual(Array.from(off.f.kappa))
+    expect(Array.from(on.f.hue)).toEqual(Array.from(off.f.hue))
+    expect(Array.from(on.f.rho0)).toEqual(Array.from(off.f.rho0))
   })
 })

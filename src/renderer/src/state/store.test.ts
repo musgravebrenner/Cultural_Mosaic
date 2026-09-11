@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { useStore } from './store'
 import { QUIZ_LENGTH, QUIZ_ORDER } from '../domain/quiz'
 import { LIBRARY_BY_ID } from '../domain/library'
-import type { LeanIndex, StrengthLevel } from '../domain/types'
+import type { LeanIndex } from '../domain/types'
 
 /**
  * The quiz is the on-ramp for the whole app, so its navigation is worth pinning down:
@@ -11,7 +11,14 @@ import type { LeanIndex, StrengthLevel } from '../domain/types'
  */
 
 function reset(): void {
-  useStore.setState({ mode: 'splash', quizIndex: 0, answers: [], customPairs: [], dirty: false })
+  useStore.setState({
+    mode: 'splash',
+    quizIndex: 0,
+    answers: [],
+    anchorAnswers: [],
+    customPairs: [],
+    dirty: false,
+  })
 }
 
 describe('quiz navigation', () => {
@@ -19,7 +26,7 @@ describe('quiz navigation', () => {
 
   it('starts fresh from the first question and discards prior answers', () => {
     const s = useStore.getState()
-    s.answerQuiz(QUIZ_ORDER[5]!, 6, 3)
+    s.answerQuiz(QUIZ_ORDER[5]!, 6)
     expect(useStore.getState().answers).toHaveLength(1)
 
     useStore.getState().startQuiz(true)
@@ -32,19 +39,19 @@ describe('quiz navigation', () => {
   it('resumes at the first GAP, not past the answer count', () => {
     // Someone who skipped question two must be taken back to it.
     const s = useStore.getState()
-    s.answerQuiz(QUIZ_ORDER[0]!, 6, 2)
-    s.answerQuiz(QUIZ_ORDER[2]!, 6, 2)
-    s.answerQuiz(QUIZ_ORDER[3]!, 6, 2)
+    s.answerQuiz(QUIZ_ORDER[0]!, 6)
+    s.answerQuiz(QUIZ_ORDER[2]!, 6)
+    s.answerQuiz(QUIZ_ORDER[3]!, 6)
 
     useStore.getState().startQuiz(false)
     expect(useStore.getState().quizIndex).toBe(1)
   })
 
-  it('resumes onto the last question rather than out of bounds when finished', () => {
+  it('resumes at the start of the anchor phase once every regular question is answered', () => {
     const s = useStore.getState()
-    for (const id of QUIZ_ORDER) s.answerQuiz(id, 3, 2)
+    for (const id of QUIZ_ORDER) s.answerQuiz(id, 3)
     useStore.getState().startQuiz(false)
-    expect(useStore.getState().quizIndex).toBe(QUIZ_LENGTH - 1)
+    expect(useStore.getState().quizIndex).toBe(QUIZ_LENGTH)
   })
 
   it('clamps the index to the quiz range', () => {
@@ -52,26 +59,26 @@ describe('quiz navigation', () => {
     s.setQuizIndex(-10)
     expect(useStore.getState().quizIndex).toBe(0)
     s.setQuizIndex(10_000)
-    expect(useStore.getState().quizIndex).toBe(QUIZ_LENGTH - 1)
+    expect(useStore.getState().quizIndex).toBeGreaterThanOrEqual(QUIZ_LENGTH)
   })
 })
 
 describe('answering', () => {
   beforeEach(reset)
 
-  it('records lean and strength separately', () => {
-    useStore.getState().answerQuiz(QUIZ_ORDER[0]!, 5, 3)
+  it('derives strength from how far the lean sits from centre', () => {
+    useStore.getState().answerQuiz(QUIZ_ORDER[0]!, 5)
     const a = useStore.getState().answers[0]!
     expect(a.leanIndex).toBe(5)
-    expect(a.strength).toBe(3)
+    expect(a.strength).toBe(2)
     expect(a.pairId).toBe(QUIZ_ORDER[0]!)
   })
 
   it('updates in place rather than accumulating duplicates', () => {
     const s = useStore.getState()
     const id = QUIZ_ORDER[0]!
-    s.answerQuiz(id, 1, 1)
-    s.answerQuiz(id, 6, 3)
+    s.answerQuiz(id, 1)
+    s.answerQuiz(id, 6)
     const answers = useStore.getState().answers
     expect(answers).toHaveLength(1)
     expect(answers[0]!.leanIndex).toBe(6)
@@ -81,9 +88,9 @@ describe('answering', () => {
   it('keeps the original answerId when revising, so the tile identity is stable', () => {
     const s = useStore.getState()
     const id = QUIZ_ORDER[0]!
-    s.answerQuiz(id, 1, 1)
+    s.answerQuiz(id, 1)
     const first = useStore.getState().answers[0]!.answerId
-    s.answerQuiz(id, 6, 3)
+    s.answerQuiz(id, 6)
     expect(useStore.getState().answers[0]!.answerId).toBe(first)
   })
 
@@ -95,15 +102,15 @@ describe('answering', () => {
   it('skip removes a prior answer entirely', () => {
     const s = useStore.getState()
     const id = QUIZ_ORDER[0]!
-    s.answerQuiz(id, 6, 3)
+    s.answerQuiz(id, 6)
     s.skipQuiz(id)
     expect(useStore.getState().answers).toHaveLength(0)
   })
 
-  it('distinguishes Dormant from skipped', () => {
+  it('dead centre is Dormant -- distinct from skipped', () => {
     const s = useStore.getState()
     const id = QUIZ_ORDER[0]!
-    s.answerQuiz(id, 3, 0)
+    s.answerQuiz(id, 3)
     const answers = useStore.getState().answers
     expect(answers).toHaveLength(1)
     expect(answers[0]!.strength).toBe(0)
@@ -111,7 +118,7 @@ describe('answering', () => {
 
   it('marks the document dirty on every mutation', () => {
     expect(useStore.getState().dirty).toBe(false)
-    useStore.getState().answerQuiz(QUIZ_ORDER[0]!, 3, 2)
+    useStore.getState().answerQuiz(QUIZ_ORDER[0]!, 3)
     expect(useStore.getState().dirty).toBe(true)
   })
 })
@@ -122,12 +129,12 @@ describe('a quiz run produces a usable profile', () => {
   it('builds answers the placement pipeline can consume', () => {
     const s = useStore.getState()
     s.startQuiz(true)
-    // Walk the first 30 questions with varied answers.
-    for (let i = 0; i < 30; i++) {
-      s.answerQuiz(QUIZ_ORDER[i]!, ((i * 2) % 7) as LeanIndex, ((i % 3) + 1) as StrengthLevel)
+    // Walk the first 20 questions with varied leans.
+    for (let i = 0; i < 20; i++) {
+      s.answerQuiz(QUIZ_ORDER[i]!, ((i * 2) % 7) as LeanIndex)
     }
     const st = useStore.getState()
-    expect(st.answers).toHaveLength(30)
+    expect(st.answers).toHaveLength(20)
     // Every referenced pair resolves, which is what placeAnswers requires.
     for (const a of st.answers) {
       expect(LIBRARY_BY_ID.has(a.pairId), a.pairId).toBe(true)
@@ -140,7 +147,7 @@ describe('a quiz run produces a usable profile', () => {
 
   it('snapshots exactly the referenced pairs when saved', () => {
     const s = useStore.getState()
-    for (let i = 0; i < 5; i++) s.answerQuiz(QUIZ_ORDER[i]!, 4, 2)
+    for (let i = 0; i < 5; i++) s.answerQuiz(QUIZ_ORDER[i]!, 4)
     const profile = useStore.getState().toProfile('1.0.0')
     expect(profile.pairs).toHaveLength(5)
     expect(profile.pairs.map((p) => p.id).sort()).toEqual(QUIZ_ORDER.slice(0, 5).slice().sort())

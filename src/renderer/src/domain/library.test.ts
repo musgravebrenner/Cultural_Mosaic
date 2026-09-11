@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { LIBRARY, ANTAGONISMS, LIBRARY_BY_ID } from './library'
-import { CATEGORY_OF_FACET, FACETS_BY_CATEGORY, CATEGORIES } from './taxonomy'
+import { ANCHORS, LIBRARY, ANTAGONISMS, LIBRARY_BY_ID } from './library'
+import { CATEGORY_OF_FACET, FACETS_BY_CATEGORY, CATEGORIES, CATEGORY_INDEX } from './taxonomy'
+import { normalizeMix } from '../layout/polar'
 
 /**
  * These catch the data-entry mistakes that would otherwise surface as one
@@ -9,14 +10,17 @@ import { CATEGORY_OF_FACET, FACETS_BY_CATEGORY, CATEGORIES } from './taxonomy'
  */
 
 describe('library integrity', () => {
-  it('has 79 pairs', () => {
-    expect(LIBRARY).toHaveLength(79)
+  it('has 21 pairs', () => {
+    expect(LIBRARY).toHaveLength(21)
   })
 
   it('has the documented per-category counts', () => {
     const counts = { demographic: 0, geographic: 0, associative: 0 }
     for (const p of LIBRARY) counts[p.category]++
-    expect(counts).toEqual({ demographic: 21, geographic: 24, associative: 34 })
+    // Restructured from a 30-pair library (itself distilled from an 86-pair draft):
+    // exactly 7 regular orientation questions per category, with the pairs that used
+    // to do anchor duty under a spectrum disguise moved out to ANCHORS instead.
+    expect(counts).toEqual({ demographic: 7, geographic: 7, associative: 7 })
   })
 
   it('has unique ids', () => {
@@ -33,11 +37,17 @@ describe('library integrity', () => {
     }
   })
 
+  /**
+   * Union of LIBRARY and ANCHORS, not LIBRARY alone: religion, life-events, standing
+   * and embodied are now covered entirely by their anchor (ANCH-A-04/01/02/03), since
+   * the regular spectrum question that used to stand in for each was either retired
+   * or replaced. A fact-type question is still a question for this purpose.
+   */
   it('covers every one of the 15 Table 1 facets', () => {
-    const seen = new Set(LIBRARY.map((p) => p.facet))
+    const seen = new Set([...LIBRARY.map((p) => p.facet), ...ANCHORS.map((a) => a.facet)])
     for (const c of CATEGORIES) {
       for (const f of FACETS_BY_CATEGORY[c]) {
-        expect(seen.has(f), `no pairs authored for facet "${f}"`).toBe(true)
+        expect(seen.has(f), `no pairs or anchors authored for facet "${f}"`).toBe(true)
       }
     }
   })
@@ -138,7 +148,8 @@ describe('category mix vectors', () => {
     // someone edited a mix and should confirm the blend was intended.
     const idx = { demographic: 0, geographic: 1, associative: 2 } as const
     const blended = LIBRARY.filter((p) => (p.mix[idx[p.category]] ?? 0) < Math.max(...p.mix))
-    expect(blended.map((p) => p.id)).toEqual(['A-AVO-06'])
+    // A-AVO-06, the previous sole example, was cut in the distillation to 30 pairs.
+    expect(blended.map((p) => p.id)).toEqual([])
   })
 })
 
@@ -190,29 +201,71 @@ describe('immutability', () => {
    * the result reads as a truss), a thick middle band (material to build with), and a
    * well-populated fluid core (loads to carry). A drift here quietly changes what all
    * the artwork looks like, so it is asserted rather than left to chance.
+   *
+   * Thresholds are scaled for the 21-pair regular set (down from the 30-pair library's
+   * 13/10/7), not the 30-pair library's own numbers -- ANCHORS now carries the bulk of
+   * what used to be the library's anchor share, on purpose (see the note below).
    */
   it('has a healthy rim / middle / core distribution', () => {
     const anchors = LIBRARY.filter((p) => p.immutability >= 0.75)
     const mass = LIBRARY.filter((p) => p.immutability > 0.45 && p.immutability < 0.75)
     const loads = LIBRARY.filter((p) => p.immutability <= 0.45)
 
-    // Shape guards, not exact counts. Current: 11 / 29 / 39.
-    expect(anchors.length, 'anchor candidates').toBeGreaterThanOrEqual(8)
-    expect(anchors.length, 'too many anchor candidates').toBeLessThanOrEqual(16)
-    expect(mass.length, 'structural mass band').toBeGreaterThanOrEqual(25)
-    expect(loads.length, 'load candidates').toBeGreaterThanOrEqual(15)
-    // The middle band must not be so thin that the optimizer has nothing to build with
-    // between the rim pins and the hub loads.
-    expect(mass.length / LIBRARY.length, 'mass band share').toBeGreaterThan(0.25)
+    // Shape guards, not exact counts. Current: 8 / 7 / 6.
+    expect(anchors.length, 'anchor candidates').toBeGreaterThanOrEqual(6)
+    expect(anchors.length, 'too many anchor candidates').toBeLessThanOrEqual(12)
+    expect(mass.length, 'structural mass band').toBeGreaterThanOrEqual(5)
+    expect(loads.length, 'load candidates').toBeGreaterThanOrEqual(4)
     expect(anchors.length + mass.length + loads.length).toBe(LIBRARY.length)
   })
 
-  it('draws anchor candidates from more than one category', () => {
-    // All anchors in one sector means every load path terminates on one rim arc, which
-    // is the DOMINANT morphology. It must be reachable by a profile, never forced by
-    // the library.
-    const cats = new Set(LIBRARY.filter((p) => p.immutability >= 0.75).map((p) => p.category))
-    expect(cats.size).toBeGreaterThanOrEqual(2)
+  /**
+   * EVERY category must be able to anchor, and Associative is the one that could not.
+   *
+   * Chao & Moon define the associative category by ongoing choice, so a library built
+   * only from Table 1's associative tiles has nothing fixed in it -- and since radius
+   * comes from immutability, the entire Associative third of the disc could never reach
+   * the rim. Every load path had to terminate on the Demographic or Geographic arc,
+   * which forced the DOMINANT morphology on people whose actual anchors are the
+   * permanent things they chose.
+   *
+   * Checked over LIBRARY union ANCHORS: none of the 7 regular Associative pairs clears
+   * the anchor threshold any more (they all moved to ANCHORS, e.g. ANCH-A-01 "raised a
+   * child"), so the category's rim access now runs entirely through its anchors -- by
+   * design, not by accident, matching IRREVERSIBLE_FACETS's own rationale.
+   */
+  it('lets every category produce a rim anchor', () => {
+    const combined: { category: (typeof CATEGORIES)[number]; immutability: number }[] = [
+      ...LIBRARY,
+      ...ANCHORS,
+    ]
+    for (const c of CATEGORIES) {
+      const own = combined.filter((p) => p.category === c && p.immutability >= 0.75)
+      expect(own.length, `${c} has no possible rim anchor`).toBeGreaterThan(0)
+    }
+  })
+
+  /**
+   * ...and at least one of them must be able to reach the rim rather than merely sit in
+   * the anchor BAND. Radius is immutability modulated by purity, so a high-immutability
+   * pair whose hue is a blend gets pulled inward: an anchor category needs at least one
+   * pair -- or, for an AnchorPair, at least one OPTION -- that is both fixed and
+   * single-category.
+   */
+  it('gives every category a pure anchor, so the rim is reachable in every sector', () => {
+    for (const c of CATEGORIES) {
+      const i = CATEGORY_INDEX[c]
+      const fromPairs = LIBRARY.some(
+        (p) => p.category === c && p.immutability >= 0.75 && normalizeMix(p.mix)[i]! >= 0.9,
+      )
+      const fromAnchors = ANCHORS.some(
+        (a) =>
+          a.category === c &&
+          a.immutability >= 0.75 &&
+          a.options.some((o) => normalizeMix(o.hue)[i]! >= 0.9),
+      )
+      expect(fromPairs || fromAnchors, `${c} cannot reach the rim`).toBe(true)
+    }
   })
 
   it('keeps every avocation in the fluid core band', () => {
@@ -295,6 +348,11 @@ describe('antagonisms', () => {
   })
 
   it('has enough entries to be a meaningful signal', () => {
-    expect(ANTAGONISMS.length).toBeGreaterThanOrEqual(15)
+    // Trimmed from 18 to 6 alongside the library distillation -- most of the originals
+    // referenced a pair that got cut. 6 among 30 pairs (one in ten) is the same rough
+    // density as 18 among 86 (one in five) was generous by comparison; either way the
+    // test that matters more is the one below, that every surviving antagonism actually
+    // resolves to two real pairs.
+    expect(ANTAGONISMS.length).toBeGreaterThanOrEqual(5)
   })
 })

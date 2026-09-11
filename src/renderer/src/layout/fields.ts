@@ -1,4 +1,4 @@
-import type { PlacedTile } from '../domain/types'
+import type { Antagonism, PlacedTile } from '../domain/types'
 
 /**
  * PlacedTile[] -> grid fields. The bridge between meaning and physics.
@@ -57,7 +57,7 @@ export interface MosaicFields {
   readonly kappa: Float32Array
   /** 3*count -- hue on the simplex, V / max(kappa, eps). */
   readonly hue: Float32Array
-  /** count -- saturating-union presence, before the connectivity floor and volume remap. */
+  /** count -- 1 inside a tile, 0 in the gutters. Before the connectivity floor. */
   readonly rhoRaw: Float32Array
   /** count -- the optimizer's initial density. Floored and volume-feasible. */
   readonly rho0: Float32Array
@@ -65,7 +65,10 @@ export interface MosaicFields {
   readonly coherence: Float32Array
   /** count -- the concordance stiffness multiplier w_e in [wMin, 1]. NEVER updated with rho. */
   readonly w: Float32Array
-  /** count -- index into the tile array of the dominant contributor, or -1. */
+  /**
+   * count -- index into the tile array of the tile owning this cell, or -1 for gutter.
+   * EXACT now that tiles do not overlap, which is what makes per-tile hover reliable.
+   */
   readonly provenance: Int16Array
   /** Derived volume fraction actually used. */
   volumeFraction: number
@@ -95,25 +98,23 @@ export function createFields(grid: Grid): MosaicFields {
 
 // --- Constants ------------------------------------------------------------
 
-/** Kernel cutoff in sigmas. Offset so the kernel is exactly 0 at the edge. */
-const CUTOFF_SIGMAS = 3
-const CUTOFF_OFFSET = Math.exp(-4.5)
-const CUTOFF_SCALE = 1 / (1 - CUTOFF_OFFSET)
-
 /**
- * Connectivity floor. At iteration 1 the entire disc is one connected component
- * containing every pin and every load, so the user's answers CANNOT create a
- * disconnected starting point -- disconnection can then only arise from the
- * optimizer's own choices, and compliance minimization will not sever a path it needs.
- * This is defence layer 4 of 4 against the floating-material failure mode.
+ * Connectivity floor, and with discrete tiles it does more work than before.
+ *
+ * At iteration 1 the entire disc must be ONE connected component containing every pin
+ * and every load, so a user profile cannot hand the optimizer a disconnected starting
+ * point. That matters far more now: tiles are separated by a one-element gutter, so if
+ * the gutters sat at the density minimum every single tile would be its own island under
+ * 4-connectivity, the connectivity pass would constrain nearly every DOF, and the solve
+ * would return no signal at all.
+ *
+ * The floor is also what the gutters render as: it equals the default solidLo, so
+ * smoothstep maps it to zero coverage and the gutters read as background -- tiles look
+ * discrete with no border-drawing code -- while still being real, weak material that
+ * the optimizer can thicken into a bridge or erode.
  */
 const RHO_FLOOR = 0.25
 const RHO_MIN = 1e-3
-/**
- * Saturation rate for the density union. -ln(0.4) puts a single full-strength deposit
- * at 0.6 of full density, so overlap has room to read as genuinely denser.
- */
-const LAMBDA = -Math.log(0.4)
 
 /** Conviction half-saturation for the concordance gate. */
 const KAPPA_HALF = 0.35
@@ -121,25 +122,40 @@ const KAPPA_HALF = 0.35
 const S_NEUTRAL = 0.6
 const W_MIN = 0.15
 const W_EXPONENT = 2
-
-// --- Deposit --------------------------------------------------------------
-
 /**
- * Truncated, offset Gaussian: smooth like a Gaussian, compact like an RBF, and exactly
- * zero at the cutoff so there is no discontinuity artifact along a visible circle.
- * Peak-normalized, so k(0) = 1 exactly.
+ * How much of a tile's stiffness an engaged conflict can take away.
+ *
+ * DESTRUCTIVE INTERFERENCE. Two identities the library declares to be in tension do not
+ * simply sit next to each other; each makes the other structurally less able to carry
+ * load, so the optimizer removes material from BOTH -- which is the whole point, and why
+ * it reads as interference rather than as one winning.
+ *
+ * Implemented as a stiffness penalty rather than as a smaller deposit, for two reasons.
+ * The seed stays a faithful record of what was actually answered, at the conviction it
+ * was answered with, so the static picture never understates an identity the person
+ * holds strongly. And the erosion is then CONDITIONAL: weakened material that still
+ * happens to be the only path to an anchor survives, because removing it would cost more
+ * compliance than it saves. A conflict that is load-bearing stays; a conflict that is
+ * decorative is eaten. That is a much better claim than "conflict always destroys", and
+ * it is the optimizer that decides which case applies rather than this constant.
+ *
+ * At 0.7 a fully engaged conflict leaves 30% of the stiffness, which BESO's removal
+ * threshold reliably takes and SIMP grinds down over a dozen iterations.
  */
-function kernel(d2: number, sigma: number): number {
-  const s2 = sigma * sigma
-  if (d2 > CUTOFF_SIGMAS * CUTOFF_SIGMAS * s2) return 0
-  return (Math.exp(-d2 / (2 * s2)) - CUTOFF_OFFSET) * CUTOFF_SCALE
-}
+const ANTAGONISM_BITE = 0.7
+
+// --- Stamp ----------------------------------------------------------------
 
 export interface FieldOptions {
   /** Sensitivity filter radius in ELEMENTS. Also the coherence neighbourhood radius. */
   readonly filterRadius: number
   /** Explicit volume fraction, or 'derived' to compute it from total strength. */
   readonly volumeFraction: number | 'derived'
+  /**
+   * Authored value conflicts. Omitted means no destructive interference, which is what
+   * the unit tests for the field maths want.
+   */
+  readonly antagonisms?: readonly Antagonism[]
 }
 
 /**
@@ -179,63 +195,56 @@ export function buildFields(
 ): void {
   const { grid, V, kappa, hue, rhoRaw, rho0, provenance } = f
   const { n, h, cx, cy, mask } = grid
-  const count = grid.count
 
   V.fill(0)
   kappa.fill(0)
   hue.fill(0)
   rho0.fill(0)
+  rhoRaw.fill(0)
   provenance.fill(-1)
-  // Accumulate the plain amplitude sum A; the saturating union is applied afterward.
-  const acc = rhoRaw
-  acc.fill(0)
-  // Track the largest single contribution per cell, for hover provenance.
-  const best = new Float32Array(count)
 
+  /**
+   * One uniform square per answered question.
+   *
+   * Tiles claim disjoint lattice cells, so nothing overlaps and each cell belongs to
+   * exactly one answer. That is a simplification everywhere downstream: the hue is the
+   * tile's own hue rather than a weighted average, `kappa` is exactly the tile's
+   * strength value (which the renderer maps to saturation, so conviction reads as colour
+   * intensity rather than as area), and provenance is exact, which is what makes
+   * per-tile hover trustworthy.
+   */
   for (let t = 0; t < tiles.length; t++) {
     const tile = tiles[t]!
     const { x, y, sigma, amplitude } = tile
     if (amplitude <= 0 || sigma <= 0) continue
-    const reach = CUTOFF_SIGMAS * sigma
     const [hr, hg, hb] = tile.hue
 
-    // Only visit the bounding box of this deposit -- cost is O(sum sigma^2/h^2), not
-    // O(tiles * grid).
-    const ex0 = Math.max(0, Math.floor((x - reach + 1) / h - 0.5))
-    const ex1 = Math.min(n - 1, Math.ceil((x + reach + 1) / h - 0.5))
-    const ey0 = Math.max(0, Math.floor((y - reach + 1) / h - 0.5))
-    const ey1 = Math.min(n - 1, Math.ceil((y + reach + 1) / h - 0.5))
+    // Bounding box of the square, in element indices.
+    const ex0 = Math.max(0, Math.floor((x - sigma + 1) / h - 0.5))
+    const ex1 = Math.min(n - 1, Math.ceil((x + sigma + 1) / h - 0.5))
+    const ey0 = Math.max(0, Math.floor((y - sigma + 1) / h - 0.5))
+    const ey1 = Math.min(n - 1, Math.ceil((y + sigma + 1) / h - 0.5))
 
     for (let ey = ey0; ey <= ey1; ey++) {
       for (let ex = ex0; ex <= ex1; ex++) {
         const i = ey * n + ex
         if (!mask[i]) continue
-        const dx = cx[i]! - x
-        const dy = cy[i]! - y
-        const k = kernel(dx * dx + dy * dy, sigma)
-        if (k <= 0) continue
+        // Square, not radial: Chebyshev distance rather than Euclidean.
+        if (Math.abs(cx[i]! - x) > sigma || Math.abs(cy[i]! - y) > sigma) continue
 
-        const contrib = amplitude * k
-        V[3 * i]! += contrib * hr
-        V[3 * i + 1]! += contrib * hg
-        V[3 * i + 2]! += contrib * hb
-        acc[i]! += contrib
-        if (contrib > best[i]!) {
-          best[i] = contrib
-          provenance[i] = t
-        }
+        V[3 * i] = amplitude * hr
+        V[3 * i + 1] = amplitude * hg
+        V[3 * i + 2] = amplitude * hb
+        rhoRaw[i] = 1
+        provenance[i] = t
       }
     }
   }
 
-  // Finish the soft-OR and the hue normalization.
-  let supported = 0
+  let covered = 0
   for (let d = 0; d < grid.designList.length; d++) {
     const i = grid.designList[d]!
-    // -expm1(-x) is 1 - exp(-x) evaluated accurately for small x.
-    const raw = -Math.expm1(-LAMBDA * acc[i]!)
-    rhoRaw[i] = raw
-    if (raw > 1e-6) supported++
+    if (rhoRaw[i]! > 0) covered++
     const kap = V[3 * i]! + V[3 * i + 1]! + V[3 * i + 2]!
     kappa[i] = kap
     if (kap > 1e-6) {
@@ -243,104 +252,154 @@ export function buildFields(
       hue[3 * i + 1] = V[3 * i + 1]! / kap
       hue[3 * i + 2] = V[3 * i + 2]! / kap
     }
+    /**
+     * Solid inside a tile, at the connectivity floor everywhere else in the disc.
+     *
+     * Deliberately NOT rescaled to the volume target. With a smooth Gaussian seed a
+     * gamma remap was worth it, because the seed was the optimizer's whole starting
+     * guess; with discrete tiles a remap can only do one of two harmful things -- crush
+     * the gutters below the solid threshold, which fragments every tile into its own
+     * island, or dim the tiles themselves, which throws away the saturation encoding.
+     *
+     * Starting above the volume target is fine: the optimality-criteria update enforces
+     * the constraint every iteration and walks the volume down by at most the move limit,
+     * so it lands on target within a couple of steps. Structural honesty is worth more
+     * here than a feasible iteration zero.
+     */
+    rho0[i] = rhoRaw[i]! > 0 ? 1 : RHO_FLOOR
   }
-  f.supportFraction = supported / grid.designList.length
+  f.supportFraction = covered / Math.max(1, grid.designList.length)
 
   computeConcordance(f, opts.filterRadius)
+  if (opts.antagonisms && opts.antagonisms.length > 0) {
+    applyDestructiveInterference(f, tiles, opts.antagonisms)
+  }
 
   const vf =
-    opts.volumeFraction === 'derived' ? deriveVolumeFraction(tiles) : opts.volumeFraction
+    opts.volumeFraction === 'derived'
+      ? // The measured coverage, so the target is a share of what was actually deposited.
+        deriveVolumeFraction(tiles, f.supportFraction)
+      : opts.volumeFraction
   f.volumeFraction = vf
-  f.sparse = false
-  remapToVolume(f, vf)
+  // A profile so sparse that even the floor cannot reach the target; the optimizer will
+  // still run, but the UI should say the mosaic is thin.
+  f.sparse = f.supportFraction * 1 + (1 - f.supportFraction) * RHO_FLOOR < vf * 0.75
 }
 
 /**
- * Volume fraction from total identification strength.
+ * Weaken both sides of every engaged conflict.
  *
- * Volume fraction is the single most visually dominant parameter. Left as a free
- * slider it swamps every other signal and the artwork stops being a portrait. Bound to
- * total strength it reads as: strong decisive identities give a dense, load-bearing
- * mosaic; tentative answers give a thin, filigree one.
+ * Runs AFTER computeConcordance, because it multiplies into the stiffness field that
+ * concordance produces rather than replacing it. The two are complementary and operate
+ * at different ranges: concordance is local and automatic -- unlike hues touching along a
+ * tile seam weaken each other wherever they happen to meet -- while this is long-range
+ * and authored, so two identities that genuinely contradict each other interfere from
+ * opposite sides of the disc, where no local rule could ever connect them.
  *
- * The clamp is partly a feasibility requirement and partly an aesthetic one. Below
- * about 0.18 a disc carrying a dozen point loads cannot form a connected truss at the
- * default filter radius and the optimizer returns fragments. The UPPER bound was
- * lowered from 0.55 to 0.42 after looking at real output: a strongly-answered profile
- * derived 0.46, at which the optimum is a set of consolidated blobs rather than a
- * structure -- there is simply enough material that nothing has to be spanned. The same
- * profile at 0.24 produces clearly legible load paths and negative space. The range now
- * keeps the whole span in the regime where structure is visible, while preserving the
- * mapping that strong, decisive identities give a denser mosaic than tentative ones.
- *
- * Users who want the dense extreme can still set it manually; the Advanced panel shows
- * the derived value alongside the override.
+ * Uses `provenance`, so the penalty lands on exactly the cells the two answers own and
+ * nowhere else. That is only possible because tiles are discrete; with overlapping
+ * Gaussian deposits there was no cell that belonged to one answer.
  */
-export function deriveVolumeFraction(tiles: readonly PlacedTile[]): number {
+function applyDestructiveInterference(
+  f: MosaicFields,
+  tiles: readonly PlacedTile[],
+  antagonisms: readonly Antagonism[],
+): void {
+  const byPair = new Map<string, PlacedTile>()
+  for (const t of tiles) byPair.set(t.pairId, t)
+
+  /** answerId -> total engagement against it, summed over every conflict it is in. */
+  const bite = new Map<string, number>()
+  for (const ag of antagonisms) {
+    const ta = byPair.get(ag.a)
+    const tb = byPair.get(ag.b)
+    if (!ta || !tb) continue
+    /**
+     * Only fires when BOTH tense poles were actually chosen.
+     *
+     * `aPole` is -1 for poleA and +1 for poleB, so `lean * aPole` is positive exactly
+     * when the answer leans toward the pole this conflict is about, and its magnitude is
+     * how far. An answer that leans the other way contributes zero: holding the
+     * compatible pole of a contested pair is not a conflict.
+     */
+    const ea = Math.max(0, ta.lean * ag.aPole)
+    const eb = Math.max(0, tb.lean * ag.bPole)
+    const engaged = ea * eb * ta.salience * tb.salience * ag.weight
+    if (engaged <= 1e-6) continue
+    bite.set(ta.answerId, (bite.get(ta.answerId) ?? 0) + engaged)
+    bite.set(tb.answerId, (bite.get(tb.answerId) ?? 0) + engaged)
+  }
+  if (bite.size === 0) return
+
+  // Resolve per tile index once, rather than per cell.
+  const perTile = new Float32Array(tiles.length)
+  for (let i = 0; i < tiles.length; i++) {
+    perTile[i] = Math.min(1, bite.get(tiles[i]!.answerId) ?? 0)
+  }
+
+  const { w, provenance, grid } = f
+  for (let d = 0; d < grid.designList.length; d++) {
+    const i = grid.designList[d]!
+    const owner = provenance[i]!
+    if (owner < 0) continue
+    const b = perTile[owner]!
+    if (b <= 0) continue
+    // Clamped to W_MIN: w multiplies the element stiffness, so it must stay strictly
+    // positive or the global matrix stops being positive definite and CG will not
+    // converge.
+    w[i] = Math.max(W_MIN, w[i]! * (1 - ANTAGONISM_BITE * b))
+  }
+}
+
+/**
+ * How much of the deposited material survives the optimizer.
+ *
+ * Expressed as a SHARE OF WHAT THE ANSWERS DEPOSITED rather than as an absolute fraction
+ * of the disc, and that is the difference between tiles getting chipped and tiles just
+ * sitting there.
+ *
+ * The tile lattice covers a roughly fixed share of the disc -- PACK times the tile-body
+ * share of a cell, so about 0.34 for a small profile down to 0.26 for a full one. An
+ * absolute target of 0.2 to 0.42 straddles that: a strongly-answered 16-question profile
+ * derived 0.374 against 0.325 of tile coverage, so the optimizer had MORE budget than
+ * the answers asked for. Nothing had to be given up, so nothing was: every tile survived
+ * intact and the spare budget went into blobby fillets between them. The whole point of
+ * running the solve is that the answers propose more than the structure can afford and
+ * the physics decides what earns its place.
+ *
+ * Anchoring to measured coverage instead makes the behaviour identical at every profile
+ * size: about a fifth of the deposited material has to go, and WHICH fifth is the
+ * artwork. Weak convictions, discordant seams and both sides of an engaged conflict are
+ * the cheapest things to remove, so they are what gets eaten.
+ *
+ * The survival share still carries the original reading -- decisive identities keep more
+ * of themselves than tentative ones -- and the absolute clamp still holds: below about
+ * 0.16 a disc carrying a dozen point loads cannot form a connected truss at the default
+ * filter radius and the optimizer returns fragments.
+ *
+ * `supportFraction` is optional so the function stays callable with tiles alone, for the
+ * Advanced panel's readout and for tests of the strength mapping itself. buildFields
+ * always passes the measured value.
+ */
+export function deriveVolumeFraction(
+  tiles: readonly PlacedTile[],
+  supportFraction?: number,
+): number {
   if (tiles.length === 0) return 0.2
   let sum = 0
   for (const t of tiles) sum += t.salience
   const s = sum / tiles.length
-  return Math.min(0.42, Math.max(0.2, 0.2 + 0.22 * s))
-}
 
-/**
- * Rescale rho0 so the volume constraint is satisfiable at iteration 1.
- *
- * A monotone gamma remap on the floored field, with the exponent found by bisection.
- * Gamma rather than multiplicative scaling (which crushes weak regions toward zero,
- * losing the faint structure that discordant-boundary erosion acts on) and rather than
- * an additive shift (which inflates genuinely empty regions into a uniform grey sea and
- * destroys the zero set). Gamma fixes 0 -> 0 and 1 -> 1, changing contrast rather than
- * support.
- */
-function remapToVolume(f: MosaicFields, target: number): void {
-  const { rhoRaw, rho0, grid } = f
-  const list = grid.designList
-  const nd = list.length
-  if (nd === 0) return
-
-  // The connectivity floor is applied first, so the field being remapped is already
-  // strictly positive across the whole disc. That guarantees the bisection can reach
-  // the target from both sides.
-  const hat = (i: number): number => RHO_FLOOR + (1 - RHO_FLOOR) * rhoRaw[i]!
-
-  const meanAt = (t: number): number => {
-    let s = 0
-    for (let d = 0; d < nd; d++) {
-      s += Math.min(1, Math.max(RHO_MIN, Math.pow(hat(list[d]!), t)))
-    }
-    return s / nd
-  }
-
-  // mean(hat^t) decreases as t grows (hat <= 1), so bracket accordingly.
-  let lo = 1e-3
-  let hi = 1e-3
-  if (meanAt(1) > target) {
-    lo = 1
-    hi = 1
-    for (let k = 0; k < 40 && meanAt(hi) > target; k++) hi *= 2
-  } else {
-    hi = 1
-    lo = 1
-    for (let k = 0; k < 40 && meanAt(lo) < target; k++) lo *= 0.5
-  }
-  for (let k = 0; k < 60; k++) {
-    const mid = 0.5 * (lo + hi)
-    if (meanAt(mid) > target) lo = mid
-    else hi = mid
-  }
-  const t = 0.5 * (lo + hi)
-
-  rho0.fill(0)
-  for (let d = 0; d < nd; d++) {
-    const i = list[d]!
-    rho0[i] = Math.min(1, Math.max(RHO_MIN, Math.pow(hat(i), t)))
-  }
-  const achieved = meanAt(t)
-  // With the floor in place this should not trigger; recorded rather than silently
-  // ignored so a genuinely infeasible profile is visible in the UI.
-  f.sparse = Math.abs(achieved - target) > 0.02
+  // 0.62 at all-Minor to 0.86 at all-Core: even a wholly decisive profile gives up a
+  // seventh of its material, so the solve always has something to say.
+  const survival = 0.62 + 0.24 * s
+  const target =
+    supportFraction !== undefined && supportFraction > 0
+      ? supportFraction * survival
+      : // No coverage measured: fall back to the absolute mapping, kept in the same band
+        // the support-relative path produces so the two never disagree wildly.
+        0.18 + 0.12 * s
+  return Math.min(0.42, Math.max(0.16, target))
 }
 
 /**
@@ -422,10 +481,8 @@ function computeConcordance(f: MosaicFields, filterRadiusElems: number): void {
 export const FIELD_CONSTANTS = Object.freeze({
   RHO_FLOOR,
   RHO_MIN,
-  LAMBDA,
   KAPPA_HALF,
   S_NEUTRAL,
   W_MIN,
   W_EXPONENT,
-  CUTOFF_SIGMAS,
 })

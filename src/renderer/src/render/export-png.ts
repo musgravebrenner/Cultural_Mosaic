@@ -3,7 +3,6 @@ import { FieldRenderer } from './FieldRenderer'
 import type { FieldFrame } from './FieldRenderer'
 import { OverlayRenderer } from './OverlayRenderer'
 import { THEMES } from './tone'
-import { resampleField } from './resample'
 
 /**
  * High-resolution PNG export.
@@ -16,9 +15,17 @@ import { resampleField } from './resample'
 
 export interface ExportOptions {
   readonly size: number
-  readonly includeScaffolding: boolean
+  /**
+   * Draw the overlay layer at all -- scaffolding, ground symbols, anchor labels.
+   *
+   * Named for the LAYER rather than for one of the things on it. As
+   * `includeScaffolding` it was passed `render.showScaffolding`, so turning scaffolding
+   * off to get a clean export silently dropped the anchor labels too -- which is exactly
+   * the configuration someone exporting a labelled picture would choose.
+   */
+  readonly includeOverlay: boolean
   readonly tiles: readonly PlacedTile[]
-  readonly synthetics: readonly { x: number; y: number; thetaDeg: number }[]
+  readonly synthetics: readonly { x: number; y: number; thetaDeg: number; sigma: number }[]
   readonly rimRadius: number
 }
 
@@ -38,30 +45,14 @@ export async function exportPng(
   ctx.fillStyle = THEMES[cfg.theme].bgHex
   ctx.fillRect(0, 0, size, size)
 
-  if (cfg.upscale === 'mosaic') {
-    // Nearest-neighbour at an INTEGER factor is mathematically exact: perfectly
-    // hard-edged tiles with no resampling artifacts at all.
-    const renderer = new FieldRenderer(canvas, ctx)
-    renderer.draw(frame, cfg)
-    renderer.dispose()
-  } else {
-    /**
-     * Resample the float field FIRST, tone-map second. Never the reverse.
-     *
-     * Tone-mapping at grid resolution and then upscaling gives a mushy image whose
-     * solid/void boundary was anti-aliased at 96px and then blurred. Resampling rho and
-     * each colour channel as floats to the output resolution, and only then applying
-     * the smoothstep and the gamma composite, anti-aliases the structural boundary at
-     * the OUTPUT resolution. It is the difference between a blown-up screenshot and a
-     * print.
-     */
-    const hi = resampleField(frame, size)
-    const renderer = new FieldRenderer(canvas, ctx)
-    renderer.draw(hi, { ...cfg, upscale: 'mosaic' })
-    renderer.dispose()
-  }
+  // Nearest-neighbour at an INTEGER factor is mathematically exact: perfectly
+  // hard-edged tiles with no resampling artifacts at all -- the same treatment the
+  // live canvas always uses now that the soft-edged alternative is gone.
+  const renderer = new FieldRenderer(canvas, ctx)
+  renderer.draw(frame, cfg)
+  renderer.dispose()
 
-  if (opts.includeScaffolding) {
+  if (opts.includeOverlay) {
     const overlay = document.createElement('canvas')
     overlay.width = size
     overlay.height = size

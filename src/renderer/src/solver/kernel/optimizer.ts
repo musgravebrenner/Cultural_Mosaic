@@ -54,6 +54,8 @@ export interface OptimizerInput {
   readonly filterRadius: number
   readonly moveLimit: number
   readonly mode: 'simp' | 'beso'
+  /** SIMP's lower volume bound. See SolverConfig.volumeFloor for the measurement. */
+  readonly volumeFloor?: number
 }
 
 export interface IterationMetrics {
@@ -71,6 +73,16 @@ export interface IterationMetrics {
   noSignal: boolean
   converged: boolean
 }
+
+/**
+ * Iterations over which the volume constraint eases from the seed's own volume down to
+ * the requested target. See Optimizer.volumeTarget().
+ *
+ * 30 is about a quarter of the default 120-iteration budget: long enough that the load
+ * paths are organized before material gets scarce, short enough that the run still has
+ * ninety iterations at the real target to converge in.
+ */
+const VOLUME_RAMP = 30
 
 export class Optimizer {
   readonly mesh: Mesh
@@ -102,8 +114,49 @@ export class Optimizer {
   private loadDofs: Uint32Array
 
   private firstCompliance = 0
+  /**
+   * Volume constraint for THIS iteration: the seed's own volume at the start, easing
+   * down to the requested target over VOLUME_RAMP iterations.
+   *
+   * Volume continuation, and here it is load-bearing rather than a refinement. The tile
+   * seed deposits more material than the target allows, so material must be given up --
+   * and the cheapest material to give up, by sensitivity, is the thin connectivity floor
+   * in the gutters BETWEEN tiles. Enforcing the final target immediately therefore
+   * removes every inter-tile bridge in the first few iterations, which disconnects the
+   * domain; and a load with no path to an anchor has exactly zero sensitivity, so the
+   * optimizer has no gradient telling it to rebuild the bridge it just ate. It settles
+   * into isolated rounded blobs -- observed as "10 identities have no path to the rim"
+   * with the target 20% below tile coverage.
+   *
+   * Easing the constraint down instead means the load paths are established, and
+   * carrying real signal, before material gets scarce. At that point the bridges are
+   * among the most valuable elements in the domain rather than the least, so what gets
+   * eaten is the interior of tiles that are not carrying anything -- which is the
+   * behaviour wanted: tiles chipped into smaller tiles and drawn out toward the anchors
+   * that hold them.
+   *
+   * Returns the target unchanged when the seed already sits below it, so a sparse profile
+   * is never asked to shed material it does not have.
+   */
+  private volumeTarget(): number {
+    // SIMP cannot rebuild a bridge it has eaten; see SolverConfig.volumeFloor. BESO can,
+    // so it is allowed the full requested target.
+    const end =
+      this.mode === 'simp' ? Math.max(this.volumeFraction, this.volumeFloor) : this.volumeFraction
+    if (this.vfStart <= end) return end
+    const t = Math.min(1, this.iteration / VOLUME_RAMP)
+    // Smoothstep rather than linear: the first iterations are where disconnection
+    // happens, so the constraint should barely move until the structure has organized.
+    const ease = t * t * (3 - 2 * t)
+    return this.vfStart + (end - this.vfStart) * ease
+  }
+
   private stableCount = 0
   private identityError = 1
+  /** Volume of the seed, measured once. The start of the continuation ramp. */
+  private vfStart = 0
+  /** SIMP's lower bound; see SolverConfig.volumeFloor. */
+  private volumeFloor = 0
   iteration = 0
 
   constructor(input: OptimizerInput) {
@@ -133,6 +186,7 @@ export class Optimizer {
       this.rho[e] = input.rho0[e]!
       this.w[e] = input.w[e]!
     }
+    this.vfStart = currentVolume(this.mesh, this.rho)
     // Passive solids are held at 1.0 regardless of what the seed said.
     for (let a = 0; a < this.mesh.designList.length; a++) {
       const e = this.mesh.designList[a]!
@@ -152,6 +206,7 @@ export class Optimizer {
     this.penalty = input.penalty
     this.moveLimit = input.moveLimit
     this.volumeFraction = input.volumeFraction
+    this.volumeFloor = input.volumeFloor ?? 0
     this.mode = input.mode
 
     if (this.mode === 'beso') {
@@ -254,6 +309,8 @@ export class Optimizer {
      */
     const noSignal = !(compliance > 0)
 
+    const target = this.volumeTarget()
+
     let converged = false
     if (noSignal) {
       this.oc.changeLinf = 0
@@ -268,7 +325,7 @@ export class Optimizer {
         this.alphaRaw,
         this.alphaF,
         this.penalty,
-        this.volumeFraction,
+        target,
         compliance,
       )
       converged = r.converged
@@ -281,13 +338,35 @@ export class Optimizer {
         this.rho,
         this.rhoNew,
         this.dcF,
-        this.volumeFraction,
+        target,
         this.moveLimit,
       )
-      // Stop when the design has stopped moving for three consecutive iterations, not
-      // on a single quiet step -- the sensitivity filter makes the history mildly
-      // non-monotonic, so one small step is not evidence of convergence.
-      if (this.oc.changeLinf < 0.01) this.stableCount++
+      /**
+       * Stop when the design has stopped moving for three consecutive iterations, not on
+       * a single quiet step -- the sensitivity filter makes the history mildly
+       * non-monotonic, so one small step is not evidence of convergence.
+       *
+       * A design with loads stranded off the load path does not count as quiet, however
+       * many quiet steps it strings together. This is the PARTIAL case of the no-signal
+       * guard above and it is much easier to hit: with most loads stranded, the
+       * sensitivities over most of the domain are exactly zero, so the design genuinely
+       * stops moving and changeLinf goes quiet for several iterations running. It is not
+       * converged, it is mid-repair, and the difference is not visible in changeLinf.
+       *
+       * Observed on the sample profile at the 96 grid: iterations 6 through 9 sat at
+       * volume 0.321 and compliance 0.180 with 10 of 16 loads stranded, which tripped the
+       * three-quiet-steps test and ended the run on a half-formed structure. Two
+       * iterations later connectivity was restored on its own, compliance rose to 2.27,
+       * and the design kept moving for another twenty iterations before settling at
+       * 1.014 -- a third of the compliance the premature stop reported.
+       *
+       * Deliberately gated on stranded loads rather than on islands: a floating fragment
+       * that carries no load does not zero anyone's sensitivity, so it cannot manufacture
+       * a false quiet, and blocking on it would mean a profile that always keeps one
+       * chip loose could never converge at all.
+       */
+      const strandedLoads = this.conn.unsupportedLoads > 0
+      if (this.oc.changeLinf < 0.01 && !strandedLoads) this.stableCount++
       else this.stableCount = 0
       converged = this.stableCount >= 3
     }

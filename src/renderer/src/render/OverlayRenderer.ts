@@ -1,7 +1,8 @@
-import type { PlacedTile, RenderConfig } from '../domain/types'
+import type { PlacedTile, RenderConfig, TileRole } from '../domain/types'
 import { CATEGORY_LABEL, SECTOR_CENTER_DEG } from '../domain/taxonomy'
 import { THEMES } from './tone'
 import type { ThemeColors } from './tone'
+import { hueToCss } from './useThemeColors'
 
 /**
  * Sector guides, pinned-anchor ground symbols, load arrows, hover ring.
@@ -16,12 +17,100 @@ import type { ThemeColors } from './tone'
  * target size with a different scale rather than upscaling the display canvas.
  */
 
+const CATS = ['demographic', 'geographic', 'associative'] as const
+
+/**
+ * Where the three category labels sit. ONE definition, read by both the scaffolding that
+ * draws them and the anchor labels that must avoid them -- two copies of this drifted
+ * apart the first time the rim radius was retuned.
+ */
+function categoryLabelRing(R: number): { x: number; y: number }[] {
+  return CATS.map((c) => {
+    const a = (SECTOR_CENTER_DEG[c] * Math.PI) / 180
+    // Just outside the rim, so labels never sit on top of the deposits -- but still
+    // inside the [-1,1] box, since anything beyond r = 1 is clipped by the canvas.
+    const rr = Math.min(0.97, R + 0.075)
+    return { x: rr * Math.cos(a), y: rr * Math.sin(a) }
+  })
+}
+
+/** Horizontal anchoring that keeps a label inside the canvas box. */
+function alignFor(lx: number, widthN: number): CanvasTextAlign {
+  // Derived from the measured width rather than from a magic x threshold, so it cannot
+  // clip. It reduces to the old "centre unless far out" rule in the common case.
+  if (Math.abs(lx) + widthN / 2 <= 0.98) return 'center'
+  return lx > 0 ? 'right' : 'left'
+}
+
+const FONT = '"Segoe UI", system-ui, sans-serif'
+
+/** Never shrunk smaller than this, however long the text or small the tile. */
+const MIN_LABEL_FONT_PX = 4
+/** Ceiling for the shrink-to-fit search, as a fraction of `scale` -- never bigger than a category label. */
+const MAX_LABEL_FONT_FRAC = 0.04
+const LABEL_LINE_HEIGHT_MULT = 1.15
+/** Fraction of the tile's own body available to the wrapped label, leaving a small margin. */
+const LABEL_FIT_FRACTION = 0.86
+/** Blur radius of the glow behind the text, as a multiple of its own font size. */
+const LABEL_GLOW_BLUR_MULT = 0.9
+
+/**
+ * Greedy word-wrap at the CURRENT font. A single word wider than `maxWidthPx` still
+ * gets its own line rather than being split mid-word or dropped -- an overflowing line
+ * is the accepted cost of never truncating text.
+ */
+function wrapLabel(ctx: CanvasRenderingContext2D, text: string, maxWidthPx: number): string[] {
+  const words = text.split(' ')
+  const lines: string[] = []
+  let current = ''
+  for (const word of words) {
+    const candidate = current === '' ? word : `${current} ${word}`
+    if (current === '' || ctx.measureText(candidate).width <= maxWidthPx) {
+      current = candidate
+    } else {
+      lines.push(current)
+      current = word
+    }
+  }
+  if (current !== '') lines.push(current)
+  return lines
+}
+
+/**
+ * The largest font size (down to `MIN_LABEL_FONT_PX`) at which `text`, wrapped to
+ * `maxWidthPx`, fits within `maxHeightPx`. Never truncates: if even the floor size
+ * overflows the height, that best-effort wrap is returned anyway, so a label may spill
+ * a little past its own tile rather than lose words -- "small but complete" over
+ * "clipped".
+ */
+function fitLabel(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidthPx: number,
+  maxHeightPx: number,
+  startFontPx: number,
+): { fontPx: number; lines: string[]; lineHeightPx: number } {
+  let best = {
+    fontPx: MIN_LABEL_FONT_PX,
+    lines: [text],
+    lineHeightPx: MIN_LABEL_FONT_PX * LABEL_LINE_HEIGHT_MULT,
+  }
+  for (let fontPx = Math.max(MIN_LABEL_FONT_PX, Math.round(startFontPx)); fontPx >= MIN_LABEL_FONT_PX; fontPx--) {
+    ctx.font = `${fontPx}px ${FONT}`
+    const lines = wrapLabel(ctx, text, maxWidthPx)
+    const lineHeightPx = fontPx * LABEL_LINE_HEIGHT_MULT
+    best = { fontPx, lines, lineHeightPx }
+    if (lines.length * lineHeightPx <= maxHeightPx) break
+  }
+  return best
+}
+
 export interface OverlayInput {
   readonly tiles: readonly PlacedTile[]
   readonly rimRadius: number
   /** answerId currently hovered, or null. */
   /** Neutral supports the app invented; drawn hollow so they read as not-yours. */
-  readonly synthetics: readonly { x: number; y: number; thetaDeg: number }[]
+  readonly synthetics: readonly { x: number; y: number; thetaDeg: number; sigma: number }[]
   readonly hovered: string | null
   /** Iteration count, for the load-arrow pulse. 0 when idle. */
   readonly phase: number
@@ -65,23 +154,18 @@ export class OverlayRenderer {
       if (t.role === 'anchor') this.drawGroundSymbol(t, theme, scale, px, py)
     }
     for (const s of input.synthetics) {
-      this.drawGroundSymbol(
-        {
-          thetaDeg: s.thetaDeg,
-          x: s.x,
-          y: s.y,
-          salience: 0.35,
-          hue: [1 / 3, 1 / 3, 1 / 3] as const,
-        },
-        theme,
-        scale,
-        px,
-        py,
-        true,
-      )
+      this.drawGroundSymbol(s, theme, scale, px, py, true)
     }
     for (const t of input.tiles) {
       if (t.role === 'load' && t.load) this.drawLoadArrow(t, theme, input.phase, scale, px, py)
+    }
+
+    // `showPoleLabels` is a superset of `showAnchorLabels` (anchors plus the mass
+    // band), drawn through the same call so a tile is never labelled twice when both
+    // are on.
+    if (cfg.showAnchorLabels || cfg.showPoleLabels) {
+      const roles: TileRole[] = cfg.showPoleLabels ? ['anchor', 'mass'] : ['anchor']
+      this.drawTileLabels(input, theme, scale, px, py, roles)
     }
 
     const hov = input.tiles.find((t) => t.answerId === input.hovered)
@@ -116,7 +200,7 @@ export class OverlayRenderer {
 
     // Sector arcs in their category colours, and the dividers at 0 / 120 / 240 deg.
     ctx.lineWidth = Math.max(2, scale * 0.012)
-    const cats = ['demographic', 'geographic', 'associative'] as const
+    const cats = CATS
     for (let k = 0; k < 3; k++) {
       const centre = SECTOR_CENTER_DEG[cats[k]!]
       const a0 = ((centre - 60) * Math.PI) / 180
@@ -140,44 +224,160 @@ export class OverlayRenderer {
       ctx.stroke()
     }
 
-    // Category labels, set along the sector centres.
-    ctx.globalAlpha = theme.guide.label
-    ctx.font = `${Math.max(9, Math.round(scale * 0.048))}px "Segoe UI", system-ui, sans-serif`
+    /**
+     * Category labels, set along the sector centres.
+     *
+     * Haloed rather than merely tinted: a flat colour at reduced alpha reads fine over
+     * the cream or near-black background but disappears over a same-family tile right
+     * behind it (a red label over a red tile, say), which is exactly where a viewer
+     * most wants to confirm which sector they are looking at. A background-colour
+     * stroke behind the fill guarantees separation from whatever is underneath,
+     * whatever that happens to be -- the same technique the anchor labels already use.
+     */
+    ctx.font = `bold ${Math.max(9, Math.round(scale * 0.048))}px "Segoe UI", system-ui, sans-serif`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
+    ctx.lineJoin = 'round'
+    const ring = categoryLabelRing(R)
     for (let k = 0; k < 3; k++) {
-      const deg = SECTOR_CENTER_DEG[cats[k]!]
-      const a = (deg * Math.PI) / 180
-      // Just outside the rim, so labels never sit on top of the deposits -- but still
-      // inside the [-1,1] box, since anything beyond r = 1 is clipped by the canvas.
-      const rr = Math.min(0.97, R + 0.075)
-      const lx = rr * Math.cos(a)
-      const ly = rr * Math.sin(a)
-      // A centred label at 180 deg would extend past x = -1 and be clipped mid-word,
-      // so anchor each label on the side that keeps it inside the box.
-      ctx.textAlign = lx < -0.5 ? 'left' : lx > 0.5 ? 'right' : 'center'
+      const { x: lx, y: ly } = ring[k]!
+      const text = CATEGORY_LABEL[cats[k]!].toUpperCase()
+      // A centred label at 180 deg would extend past x = -1 and be clipped mid-word, so
+      // anchor each on the side that keeps it inside the box.
+      ctx.textAlign = alignFor(lx, ctx.measureText(text).width / scale)
+      ctx.globalAlpha = 1
+      ctx.lineWidth = Math.max(2, scale * 0.01)
+      ctx.strokeStyle = theme.bgHex
+      ctx.strokeText(text, px(lx), py(ly))
       ctx.fillStyle = theme.catCss[k]!
-      ctx.globalAlpha = 0.75
-      ctx.fillText(CATEGORY_LABEL[cats[k]!].toUpperCase(), px(lx), py(ly))
+      ctx.fillText(text, px(lx), py(ly))
     }
     ctx.textAlign = 'left'
 
-    // The radial axis legend.
-    ctx.globalAlpha = theme.guide.legend
-    ctx.fillStyle = theme.dimHex
-    ctx.font = `${Math.max(8, Math.round(scale * 0.036))}px "Segoe UI", system-ui, sans-serif`
+    // The radial axis legend -- same halo-and-bold treatment, at the smaller size this
+    // caption has always used.
+    ctx.font = `bold ${Math.max(8, Math.round(scale * 0.036))}px "Segoe UI", system-ui, sans-serif`
     ctx.textAlign = 'left'
+    ctx.lineWidth = Math.max(2, scale * 0.007)
+    ctx.strokeStyle = theme.bgHex
+    ctx.strokeText('chosen daily', px(0.03), py(0.04))
+    ctx.strokeText('unchangeable', px(0.03), py(R - 0.05))
+    ctx.fillStyle = theme.dimHex
     ctx.fillText('chosen daily', px(0.03), py(0.04))
-    ctx.fillText('given at birth', px(0.03), py(R - 0.05))
+    ctx.fillText('unchangeable', px(0.03), py(R - 0.05))
     ctx.globalAlpha = 1
   }
 
   /**
-   * The structural-engineering ground symbol: a triangle with hatch strokes, pointing
-   * outward. Honest to the FEA metaphor and instantly legible as "pinned".
+   * Name a tile's chosen pole -- either just the pinned anchors (`showAnchorLabels`,
+   * `roles = ['anchor']`) or every non-hub tile (`showPoleLabels`,
+   * `roles = ['anchor', 'mass']`). Two separate concerns share this one drawing path:
+   * `showAnchorLabels` says which identities hold the structure up, `showPoleLabels`
+   * says what was actually answered -- e.g. so two people's printed mosaics can be
+   * compared pole by pole -- and the second is a strict superset of the first, so a
+   * tile is never drawn twice.
+   *
+   * Set INSIDE the tile's own body -- wrapped across as many lines as it takes, shrunk
+   * down toward `MIN_LABEL_FONT_PX` if it must, but never truncated. That is a change
+   * from an earlier version that floated a one-line, ellipsis-truncated label outside
+   * the tile on a leader line: full pole text matters more than a tidy single line, and
+   * a label that stays over its own tile needs no leader and cannot collide with
+   * another tile's label (tiles never overlap) or with the category labels beyond the
+   * rim (a tile's radius plus its own half-width never reaches past `rimRadius`, and the
+   * category ring sits outside that).
+   *
+   * Loads are deliberately never included: they are the dense hub band (up to twenty
+   * tiles a few elements wide), and the hover tooltip already covers them.
+   */
+  private drawTileLabels(
+    input: OverlayInput,
+    theme: ThemeColors,
+    scale: number,
+    px: (x: number) => number,
+    py: (y: number) => number,
+    roles: readonly TileRole[],
+  ): void {
+    const { ctx } = this
+    const labelled = input.tiles.filter((t) => roles.includes(t.role))
+    if (labelled.length === 0) return
+
+    const startFontPx = Math.max(MIN_LABEL_FONT_PX, Math.round(scale * MAX_LABEL_FONT_FRAC))
+
+    ctx.save()
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.lineJoin = 'round'
+    ctx.globalAlpha = 1
+
+    for (const t of labelled) {
+      const tileSidePx = 2 * t.sigma * scale
+      const maxWidthPx = tileSidePx * LABEL_FIT_FRACTION
+      const maxHeightPx = tileSidePx * LABEL_FIT_FRACTION
+      // A tile too small to hold even the floor font legibly: skip rather than draw
+      // illegible noise. The hover tooltip still names it.
+      if (maxWidthPx < MIN_LABEL_FONT_PX || maxHeightPx < MIN_LABEL_FONT_PX) continue
+
+      const { fontPx, lines, lineHeightPx } = fitLabel(
+        ctx,
+        t.activePole,
+        maxWidthPx,
+        maxHeightPx,
+        startFontPx,
+      )
+      ctx.font = `${fontPx}px ${FONT}`
+
+      const cxPx = px(t.x)
+      const cyPx = py(t.y)
+      const blockH = lines.length * lineHeightPx
+      const firstY = cyPx - blockH / 2 + lineHeightPx / 2
+
+      /**
+       * A soft glow BEHIND the text, then a crisp fill with no shadow on top.
+       *
+       * The anchor glyph and the label are both centred on the same point, so they
+       * routinely overlap -- and the glyph is drawn in the same ink colour the text
+       * is. A hard-edged halo stroke alone is easy to break with a thin, busy glyph
+       * behind it; blurring the halo into a glow clears a wider, softer patch of
+       * background colour first, which stays legible under the glyph's linework
+       * without needing the stroke itself to get any heavier.
+       */
+      ctx.shadowColor = theme.bgHex
+      ctx.shadowBlur = Math.max(1, fontPx * LABEL_GLOW_BLUR_MULT)
+      ctx.lineWidth = Math.max(1.5, fontPx * 0.22)
+      ctx.strokeStyle = theme.bgHex
+      for (let i = 0; i < lines.length; i++) {
+        ctx.strokeText(lines[i]!, cxPx, firstY + i * lineHeightPx)
+      }
+
+      ctx.shadowBlur = 0
+      ctx.fillStyle = theme.inkHex
+      for (let i = 0; i < lines.length; i++) {
+        ctx.fillText(lines[i]!, cxPx, firstY + i * lineHeightPx)
+      }
+    }
+
+    ctx.restore()
+  }
+
+  /**
+   * The anchor mark: a literal anchor glyph, centred on the tile.
+   *
+   * Replaces an earlier FEA "pinned support" triangle -- honest to the structural
+   * metaphor, but it read as decoration rather than as a claim about the identity
+   * itself, and it was drawn in the tile's own hue, which buried it against a
+   * same-family tile. An anchor is instantly legible on sight and needs no legend, and
+   * drawing it in the theme's INK rather than the tile's hue is deliberate: this mark
+   * means "immutable", a property of the mark itself, not of which tile it sits on, so
+   * it stays the one constant, maximum-contrast colour everywhere on the disc -- pure
+   * ink on paper, pure paper-white on ink. (Requested as "black in light mode, white in
+   * dark mode": theme.inkHex already resolves to exactly that on both themes.)
+   *
+   * Upright always, never rotated to the radial direction -- an anchor has a canonical
+   * up/down the way the outward-pointing FEA triangle never needed to, and rotating it
+   * per-tile would read as broken rather than as pinned.
    */
   private drawGroundSymbol(
-    t: Pick<PlacedTile, 'thetaDeg' | 'x' | 'y' | 'salience' | 'hue'>,
+    t: Pick<PlacedTile, 'x' | 'y' | 'sigma'>,
     theme: ThemeColors,
     scale: number,
     px: (x: number) => number,
@@ -185,43 +385,66 @@ export class OverlayRenderer {
     synthetic = false,
   ): void {
     const { ctx } = this
-    const a = (t.thetaDeg * Math.PI) / 180
-    const s = scale * (0.026 + 0.016 * t.salience)
+    // Sized off the tile's own half-width so the glyph sits comfortably inside the
+    // square at any profile size, from a handful of huge tiles to a full library of
+    // small ones.
+    const s = Math.max(scale * 0.02, t.sigma * scale * 0.62)
     const x = px(t.x)
     const y = py(t.y)
 
+    const ringR = s * 0.22
+    const ringY = -s * 0.78
+    const shankTop = ringY + ringR * 0.95
+    const shankBottom = s * 0.45
+    const crossbarY = -s * 0.32
+    const crossbarHalf = s * 0.4
+    const flukeR = s * 0.42
+
     ctx.save()
     ctx.translate(x, y)
-    // Canvas y is down, so the outward radial direction is (cos a, -sin a).
-    ctx.rotate(-a)
-    ctx.fillStyle = hueCss(t, theme)
-    ctx.strokeStyle = hueCss(t, theme)
-    ctx.lineWidth = Math.max(1, scale * 0.0035)
+    ctx.strokeStyle = theme.inkHex
+    ctx.fillStyle = theme.inkHex
+    ctx.lineCap = 'round'
+    ctx.lineWidth = Math.max(1, s * 0.16)
+    // Hollow and dashed for a support the app invented: it reads as "not yours".
+    ctx.globalAlpha = synthetic ? 0.5 : 0.92
+    if (synthetic) ctx.setLineDash([s * 0.16, s * 0.16])
 
+    // Ring.
     ctx.beginPath()
-    ctx.moveTo(s, 0)
-    ctx.lineTo(-s * 0.35, -s * 0.8)
-    ctx.lineTo(-s * 0.35, s * 0.8)
-    ctx.closePath()
-    if (synthetic) {
-      // Hollow and dashed: this support is the app's, not the user's.
-      ctx.globalAlpha = 0.55
-      ctx.setLineDash([scale * 0.008, scale * 0.008])
-      ctx.stroke()
-      ctx.setLineDash([])
-    } else {
-      ctx.fill()
-    }
+    ctx.arc(0, ringY, ringR, 0, Math.PI * 2)
+    ctx.stroke()
 
-    // Hatching behind the base.
-    ctx.globalAlpha = 0.75
-    for (let k = -2; k <= 2; k++) {
-      const yy = (k / 2) * s * 0.8
-      ctx.beginPath()
-      ctx.moveTo(-s * 0.35, yy)
-      ctx.lineTo(-s * 0.85, yy + s * 0.28)
-      ctx.stroke()
-    }
+    // Shank.
+    ctx.beginPath()
+    ctx.moveTo(0, shankTop)
+    ctx.lineTo(0, shankBottom)
+    ctx.stroke()
+
+    // Crossbar (the "stock").
+    ctx.beginPath()
+    ctx.moveTo(-crossbarHalf, crossbarY)
+    ctx.lineTo(crossbarHalf, crossbarY)
+    ctx.stroke()
+
+    /**
+     * Flukes: two hooks curling out from the base of the shank.
+     *
+     * Each is one arc whose circle PASSES THROUGH the shank-bottom point by
+     * construction (its centre sits exactly `flukeR` to that point's side), so the
+     * stroke starts already joined to the shank with no gap to paper over. The sweep
+     * goes through the bottom of that circle first and finishes past the side,
+     * pointing back up and outward -- the hook silhouette a real anchor fluke has,
+     * rather than a shallow V that only touches the shank at one point.
+     */
+    ctx.beginPath()
+    ctx.arc(-flukeR, shankBottom, flukeR, 0, Math.PI * 0.92, false)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(flukeR, shankBottom, flukeR, Math.PI, Math.PI * 0.08, true)
+    ctx.stroke()
+
+    ctx.setLineDash([])
     ctx.restore()
   }
 
@@ -288,9 +511,12 @@ export class OverlayRenderer {
     ctx.strokeStyle = theme.inkHex
     ctx.globalAlpha = 0.8
     ctx.lineWidth = Math.max(1, scale * 0.004)
-    ctx.beginPath()
-    ctx.arc(px(t.x), py(t.y), Math.max(4, t.sigma * scale), 0, Math.PI * 2)
-    ctx.stroke()
+    // A SQUARE, tracing the tile body, because that is the shape the answer actually
+    // occupies now. A circle of radius sigma both cut the corners off and bulged past
+    // the edges, so it read as a highlight near the tile rather than on it.
+    // Outset by a hair so the stroke sits in the gutter instead of over the artwork.
+    const half = Math.max(3, t.sigma * scale) + ctx.lineWidth
+    ctx.strokeRect(px(t.x) - half, py(t.y) - half, half * 2, half * 2)
     ctx.restore()
   }
 }
@@ -298,17 +524,9 @@ export class OverlayRenderer {
 /**
  * The tile's own hue as a CSS colour, for its overlay marks.
  *
- * Mixes from the ACTIVE theme's inks. It previously carried a private copy of the ink
- * palette, so on paper every ground symbol and load arrow would have been drawn in a
- * colour the mosaic itself never renders.
+ * Delegates to the shared `hueToCss` in useThemeColors.ts, which the interference chart
+ * (plain DOM, not canvas) also uses -- one palette mix, not two copies that can drift.
  */
 function hueCss(t: Pick<PlacedTile, 'hue'>, theme: ThemeColors): string {
-  const [hr, hg, hb] = t.hue
-  const c = theme.catCss.map((hex) => {
-    const h = hex.replace('#', '')
-    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
-  })
-  const mix = (i: number): number =>
-    Math.round(hr * c[0]![i]! + hg * c[1]![i]! + hb * c[2]![i]!)
-  return `rgb(${mix(0)}, ${mix(1)}, ${mix(2)})`
+  return hueToCss(t.hue, theme)
 }
