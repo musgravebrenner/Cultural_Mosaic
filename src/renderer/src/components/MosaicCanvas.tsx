@@ -6,10 +6,12 @@ import type { Grid, MosaicFields } from '../layout/fields'
 import { buildBoundary } from '../layout/boundary'
 import type { BoundaryConditions } from '../layout/boundary'
 import { ANTAGONISMS } from '../domain/library'
+import type { CategoryId } from '../domain/taxonomy'
 import { LEAN_NOTCHES, STRENGTH_LABELS } from '../domain/types'
 import type { PlacedTile } from '../domain/types'
 import { FieldRenderer, snapToCells } from '../render/FieldRenderer'
 import { OverlayRenderer } from '../render/OverlayRenderer'
+import type { OverlayInput } from '../render/OverlayRenderer'
 import { getSolverSession } from '../solver/SolverSession'
 import { FREE, SOLID_PASSIVE, VOID_PASSIVE } from '../solver/protocol'
 import { deriveVolumeFraction } from '../layout/fields'
@@ -86,6 +88,23 @@ export default function MosaicCanvas(): JSX.Element {
       answerId: null,
     }
     let tipDirty = false
+
+    /**
+     * Where a viewer has dragged each category label from its stock ring position, in
+     * normalized units. Lives for the component's lifetime, like `cursor` above --
+     * not store state, since it is a per-session presentation tweak (declutter
+     * whichever tile a label landed on) rather than part of the document.
+     */
+    const labelOffsets: Record<CategoryId, { x: number; y: number }> = {
+      demographic: { x: 0, y: 0 },
+      geographic: { x: 0, y: 0 },
+      associative: { x: 0, y: 0 },
+    }
+    let draggingLabel: CategoryId | null = null
+    let dragStartClientX = 0
+    let dragStartClientY = 0
+    let dragStartOffsetX = 0
+    let dragStartOffsetY = 0
 
     /** True once a run has produced frames, so the seed is not redrawn over them. */
     let showingSolverOutput = false
@@ -185,6 +204,7 @@ export default function MosaicCanvas(): JSX.Element {
               tiles: derived.tiles,
               synthetics: derived.bc.syntheticAnchors,
               rimRadius: s.layout.rimRadius,
+              labelOffsets,
             },
           )
           const name = `${s.title.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'mosaic'}-${detail.size}.png`
@@ -268,6 +288,20 @@ export default function MosaicCanvas(): JSX.Element {
       }
       seedDirty = true
       overlayDirty = true
+    }
+
+    /** Single source of truth for what the overlay draws, shared with the label hit test. */
+    const buildOverlayInput = (): OverlayInput | null => {
+      if (!derived) return null
+      const s = useStore.getState()
+      return {
+        tiles: derived.tiles,
+        synthetics: derived.bc.syntheticAnchors,
+        rimRadius: s.layout.rimRadius,
+        hovered: s.hoveredAnswerId,
+        phase,
+        labelOffsets,
+      }
     }
 
     const loop = (): void => {
@@ -378,16 +412,8 @@ export default function MosaicCanvas(): JSX.Element {
       }
 
       if (overlayDirty && derived) {
-        overlay.draw(
-          {
-            tiles: derived.tiles,
-            synthetics: derived.bc.syntheticAnchors,
-            rimRadius: s.layout.rimRadius,
-            hovered: s.hoveredAnswerId,
-            phase,
-          },
-          s.render,
-        )
+        const oi = buildOverlayInput()
+        if (oi) overlay.draw(oi, s.render)
         overlayDirty = false
       }
 
@@ -424,11 +450,47 @@ export default function MosaicCanvas(): JSX.Element {
       return derived.tiles[owner]?.answerId ?? null
     }
 
+    /**
+     * A client-coordinate point converted into the overlay canvas's own backing-pixel
+     * space, matching what `OverlayRenderer.categoryLabelBoxes` returns. Uses the
+     * FIELD canvas's rect (the overlay sits exactly on top of it, pointer-events:
+     * none) the same way `hitTest` already does, so both hit tests agree under any
+     * CSS scaling.
+     */
+    const toOverlayPx = (clientX: number, clientY: number): { x: number; y: number } | null => {
+      const rect = fieldCanvas.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return null
+      const fx = (clientX - rect.left) / rect.width
+      const fy = (clientY - rect.top) / rect.height
+      return { x: fx * overlayCanvas.width, y: fy * overlayCanvas.height }
+    }
+
+    const labelAt = (clientX: number, clientY: number): CategoryId | null => {
+      const oi = buildOverlayInput()
+      const p = toOverlayPx(clientX, clientY)
+      if (!oi || !p) return null
+      const hit = overlay
+        .categoryLabelBoxes(oi)
+        .find((b) => p.x >= b.left && p.x <= b.left + b.width && p.y >= b.top && p.y <= b.top + b.height)
+      return hit?.category ?? null
+    }
+
     const onMouseMove = (ev: MouseEvent): void => {
       const wrapRect = wrap.getBoundingClientRect()
       cursor.px = ev.clientX - wrapRect.left
       cursor.py = ev.clientY - wrapRect.top
-      const id = hitTest(ev.clientX, ev.clientY)
+
+      // A drag in progress is handled by `onWindowMouseMove` (registered on the
+      // window, so it keeps tracking even if the pointer leaves the wrap while
+      // dragging fast); this handler only does hover feedback the rest of the time.
+      if (draggingLabel) return
+
+      const overLabel = labelAt(ev.clientX, ev.clientY) !== null
+      wrap.style.cursor = overLabel ? 'grab' : ''
+      // A tile under a label chip should not also claim the hover tooltip -- the
+      // chip is what is visually on top, and it should be what is interactively on
+      // top too.
+      const id = overLabel ? null : hitTest(ev.clientX, ev.clientY)
       // Always reposition, but only touch the store when the ANSWER changes: the store
       // write drives the overlay's hover ring, and doing it per mousemove would redraw
       // the overlay on every pixel of travel.
@@ -444,11 +506,51 @@ export default function MosaicCanvas(): JSX.Element {
         cursor.answerId = null
         useStore.getState().setHovered(null)
       }
+      if (!draggingLabel) wrap.style.cursor = ''
       tipDirty = true
+    }
+
+    /** Click-and-drag a category label clear of whatever tile it landed on. */
+    const onMouseDown = (ev: MouseEvent): void => {
+      const category = labelAt(ev.clientX, ev.clientY)
+      if (!category) return
+      draggingLabel = category
+      dragStartClientX = ev.clientX
+      dragStartClientY = ev.clientY
+      dragStartOffsetX = labelOffsets[category].x
+      dragStartOffsetY = labelOffsets[category].y
+      wrap.style.cursor = 'grabbing'
+      ev.preventDefault()
+    }
+
+    /**
+     * Registered on the WINDOW, not `wrap`: a fast drag routinely outruns the wrap's
+     * own bounds between two mousemove events, and losing track of the drag there
+     * would strand the label mid-move until the next click.
+     */
+    const onWindowMouseMove = (ev: MouseEvent): void => {
+      if (!draggingLabel) return
+      const rect = fieldCanvas.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return
+      // Same normalized-unit derivation `px`/`py` invert: the canvas backing store is
+      // square, so a FRACTION of the CSS rect converts to normalized units by the
+      // same factor regardless of device pixel ratio or display scaling.
+      const dxNorm = (2 * (ev.clientX - dragStartClientX)) / rect.width
+      const dyNorm = (-2 * (ev.clientY - dragStartClientY)) / rect.height
+      labelOffsets[draggingLabel] = { x: dragStartOffsetX + dxNorm, y: dragStartOffsetY + dyNorm }
+      overlayDirty = true
+    }
+
+    const onWindowMouseUp = (): void => {
+      if (draggingLabel) wrap.style.cursor = ''
+      draggingLabel = null
     }
 
     wrap.addEventListener('mousemove', onMouseMove)
     wrap.addEventListener('mouseleave', onMouseLeave)
+    wrap.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('mousemove', onWindowMouseMove)
+    window.addEventListener('mouseup', onWindowMouseUp)
 
     // Non-React subscriptions: mark dirty, never setState.
     const unsubAnswers = useStore.subscribe((s, prev) => {
@@ -479,6 +581,9 @@ export default function MosaicCanvas(): JSX.Element {
       ro.disconnect()
       wrap.removeEventListener('mousemove', onMouseMove)
       wrap.removeEventListener('mouseleave', onMouseLeave)
+      wrap.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('mousemove', onWindowMouseMove)
+      window.removeEventListener('mouseup', onWindowMouseUp)
       window.removeEventListener('mosaic:run', onRun)
       window.removeEventListener('mosaic:reset', onReset)
       window.removeEventListener('mosaic:export', onExport)

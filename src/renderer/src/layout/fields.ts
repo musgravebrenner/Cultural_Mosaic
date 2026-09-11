@@ -123,6 +123,20 @@ const S_NEUTRAL = 0.6
 const W_MIN = 0.15
 const W_EXPONENT = 2
 /**
+ * A floor on `w` earned by a tile's OWN salience, independent of concordance.
+ *
+ * Without this, a "Core" identity that lands somewhere structurally redundant is
+ * exactly as disposable as a "Dormant" one would be, because concordance alone reads
+ * the neighbourhood, never the tile's own conviction -- contradicting the promise
+ * elsewhere in this app that a decisively held identity keeps more of itself. Capped
+ * well below 1, and combined with concordance by MAX rather than by replacing it: this
+ * guarantees a strongly-held tile a real floor of resistance, without making it
+ * immune, so a genuinely well-integrated tile can still earn full protection on
+ * concordance alone, and position can still overrule conviction at the extreme.
+ */
+const SALIENCE_PROTECTION_CAP = 0.6
+const SALIENCE_EXPONENT = 2
+/**
  * How much of a tile's stiffness an engaged conflict can take away.
  *
  * DESTRUCTIVE INTERFERENCE. Two identities the library declares to be in tension do not
@@ -373,9 +387,16 @@ function applyDestructiveInterference(
  * the cheapest things to remove, so they are what gets eaten.
  *
  * The survival share still carries the original reading -- decisive identities keep more
- * of themselves than tentative ones -- and the absolute clamp still holds: below about
- * 0.16 a disc carrying a dozen point loads cannot form a connected truss at the default
- * filter radius and the optimizer returns fragments.
+ * of themselves than tentative ones -- and the absolute clamp still holds: below this
+ * floor the truss does not merely lose material, it stops being a truss. Measured
+ * directly on the shipped sample (21 answers, the default 96-element grid, BESO): at
+ * 0.16 the structure nominally stays one connected component -- zero islands, zero
+ * stranded loads -- but the surviving members are so thin that compliance is 150x its
+ * value at iteration 1 and still climbing with no convergence after 100 iterations, i.e.
+ * a mechanism in everything but name. 0.20 is still 3.5x and still unconverged. 0.25 is
+ * the first value that converges cleanly (about 2x), so the floor sits meaningfully
+ * above that rather than right at the edge of it, since a different profile's anchor and
+ * load geometry can shift exactly where the cliff falls.
  *
  * `supportFraction` is optional so the function stays callable with tiles alone, for the
  * Advanced panel's readout and for tests of the strength mapping itself. buildFields
@@ -399,7 +420,7 @@ export function deriveVolumeFraction(
       : // No coverage measured: fall back to the absolute mapping, kept in the same band
         // the support-relative path produces so the two never disagree wildly.
         0.18 + 0.12 * s
-  return Math.min(0.42, Math.max(0.16, target))
+  return Math.min(0.42, Math.max(0.28, target))
 }
 
 /**
@@ -410,17 +431,28 @@ export function deriveVolumeFraction(
  *   s_e = ||M_e|| / Z_e           spherical coherence, exactly 1 when all parallel
  *   g_e = Z_e / (Z_e + kappaHalf) conviction gate
  *   sEff = g*s + (1-g)*S_NEUTRAL
- *   w_e  = W_MIN + (1-W_MIN) * sEff^2
+ *   w_e  = max( W_MIN + (1-W_MIN)*sEff^2,  W_MIN + (SALIENCE_CAP-W_MIN)*kappa_e^2 )
  *
  * The gate is not decoration. Bare coherence rates two near-empty but aligned cells as
  * PERFECTLY concordant, which inverts the paper: "Identity structures that are not
  * strongly related within an individual are not linked together... these identities are
  * discordant" (p. 1135), and "COMPATIBLE AND STRONG value sets can converge" (p. 1135).
- * Gating toward a neutral value gives three correct regimes:
+ * Gating toward a neutral value gives the concordance term's three regimes:
  *
  *   strong + harmonious -> w -> 1     concordant structure, stiff, becomes a load path
  *   strong + conflicting -> w -> WMIN discordant seam, weak, erodes to void
  *   weak / unlinked     -> w mid      independent tile; dies by redundancy, not conflict
+ *
+ * The second term in the max is what stops a fourth, previously unhandled regime --
+ * strong + ISOLATED, no authored conflict and no neighbourly agreement either -- from
+ * quietly falling into the same "mid, dies by redundancy" bucket as a weak one. Position
+ * and neighbourhood are accidents of the lattice-packing algorithm, not a claim about
+ * how much the person meant an answer; a Core-strength identity that happens to land
+ * somewhere structurally redundant should not be exactly as disposable as a Dormant one
+ * would be. Capped at SALIENCE_CAP rather than 1, and combined by MAX rather than by
+ * replacing the concordance term: conviction earns a real floor, not immunity, so a
+ * genuinely well-integrated tile can still out-earn a merely-strong one, and position
+ * can still overrule conviction at the extreme.
  *
  * WELL-POSEDNESS: w_e is computed once here and held fixed for the entire optimization.
  * It must never be recomputed from rho. The colour field is a static spatially-varying
@@ -474,7 +506,14 @@ function computeConcordance(f: MosaicFields, filterRadiusElems: number): void {
     const g = z > 1e-9 ? z / (z + KAPPA_HALF) : 0
     const sEff = g * s + (1 - g) * S_NEUTRAL
     coherence[i] = sEff
-    w[i] = W_MIN + (1 - W_MIN) * Math.pow(sEff, W_EXPONENT)
+    const concordanceW = W_MIN + (1 - W_MIN) * Math.pow(sEff, W_EXPONENT)
+    // `mag[i]` is this cell's own kappa (0 outside any tile): the owning tile's own
+    // salience, unsmoothed by the neighbourhood loop above. MAX rather than replace,
+    // so a decisively held tile is never WORSE off than concordance alone would leave
+    // it, and a merely well-integrated one can still earn full protection without
+    // needing to also be strongly held.
+    const salienceW = W_MIN + (SALIENCE_PROTECTION_CAP - W_MIN) * Math.pow(mag[i]!, SALIENCE_EXPONENT)
+    w[i] = Math.max(concordanceW, salienceW)
   }
 }
 

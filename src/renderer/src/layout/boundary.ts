@@ -60,6 +60,24 @@ const MAX_LOADS = 20
 
 const PIN_RADIUS_SIGMAS = 1.2
 const PASSIVE_RADIUS_SIGMAS = 1.5
+/**
+ * Salience at or above which a MASS tile's own footprint is guaranteed solid,
+ * regardless of the optimizer's opinion of it.
+ *
+ * `w`'s salience floor (see layout/fields.ts) tried to earn this the "honest" way, by
+ * rescaling BESO's sensitivity number -- and provably cannot: sensitivity is
+ * `w * strain-energy`, and a tile whose lattice position simply carries no measured
+ * stress has strain energy at or near zero, so no finite w moves it. A Core identity
+ * (this app's own maximum conviction) that lands somewhere structurally irrelevant
+ * would otherwise vanish exactly as completely as a Dormant one -- which is the
+ * opposite of what this app claims about decisively held identities. This is the
+ * unconditional version: the same `passive` solid-forcing already used for every
+ * anchor and load patch, applied to a Core tile's own footprint and nothing more.
+ * Scoped to Core only (not Notable/Minor) and to `role === 'mass'` only (anchors and
+ * loads already get this from their own pin/load patches) so the guarantee stays rare
+ * enough not to crowd out the volume budget the rest of the structure competes over.
+ */
+const CORE_PROTECTION_SALIENCE = 0.99
 
 /** Fraction of total load magnitude that authored conflicts may consume. */
 const CONFLICT_LOAD_CAP = 0.25
@@ -539,6 +557,81 @@ export function buildBoundary(
   }
 
   for (const t of loads) if (roles.get(t.answerId) === undefined) roles.set(t.answerId, 'load')
+
+  /**
+   * Guarantee, not a nudge: a Core-conviction MASS tile's own footprint (its exact
+   * square, the same test `buildFields` stamps it with -- not the padded circle
+   * `solidRegion` uses for a pin or load patch, since there is no point-load
+   * singularity here to guard against) is forced solid. See `CORE_PROTECTION_SALIENCE`.
+   */
+  const protectCoreMass = (x: number, y: number, sigma: number): void => {
+    const ex0 = Math.max(0, Math.floor((x - sigma + 1) / h - 0.5))
+    const ex1 = Math.min(n - 1, Math.ceil((x + sigma + 1) / h - 0.5))
+    const ey0 = Math.max(0, Math.floor((y - sigma + 1) / h - 0.5))
+    const ey1 = Math.min(n - 1, Math.ceil((y + sigma + 1) / h - 0.5))
+    for (let ey = ey0; ey <= ey1; ey++) {
+      for (let ex = ex0; ex <= ex1; ex++) {
+        const e = ey * n + ex
+        if (!grid.mask[e]) continue
+        if (Math.abs(grid.cx[e]! - x) > sigma || Math.abs(grid.cy[e]! - y) > sigma) continue
+        passive.add(e)
+      }
+    }
+  }
+
+  /**
+   * A forced-solid patch that does not physically TOUCH the rest of the structure is
+   * exactly what the FEA connectivity guard exists to catch (see connectivity.ts):
+   * a solid island with no anchored neighbour gets its DOFs pinned to zero and
+   * excluded from compliance entirely, which renders as full colour while
+   * contributing nothing structurally -- present in the picture, absent from the
+   * truss. So the guarantee has to cover the PATH, not just the tile: a corridor of
+   * forced-solid cells joining it straight to its nearest anchor.
+   *
+   * Sampled every half-element along the segment and stamped with a small radius
+   * rather than a single-cell-wide Bresenham line, so the corridor is robustly
+   * 4-CONNECTED throughout -- two cells touching only at a corner transmit no load
+   * through a Q4 mesh and the connectivity pass treats that exactly like a gap.
+   */
+  const CORRIDOR_RADIUS = 1.1 * h
+  const bridgeToNearestAnchor = (x: number, y: number): void => {
+    let bestX = 0
+    let bestY = 0
+    let bestD = Infinity
+    for (const a of [...anchors, ...synthetics]) {
+      const d = Math.hypot(a.x - x, a.y - y)
+      if (d < bestD) {
+        bestD = d
+        bestX = a.x
+        bestY = a.y
+      }
+    }
+    if (!Number.isFinite(bestD)) return
+    const steps = Math.max(1, Math.ceil(bestD / (0.5 * h)))
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps
+      const px = x + (bestX - x) * t
+      const py = y + (bestY - y) * t
+      const ex0 = Math.max(0, Math.floor((px - CORRIDOR_RADIUS + 1) / h - 0.5))
+      const ex1 = Math.min(n - 1, Math.ceil((px + CORRIDOR_RADIUS + 1) / h - 0.5))
+      const ey0 = Math.max(0, Math.floor((py - CORRIDOR_RADIUS + 1) / h - 0.5))
+      const ey1 = Math.min(n - 1, Math.ceil((py + CORRIDOR_RADIUS + 1) / h - 0.5))
+      for (let ey = ey0; ey <= ey1; ey++) {
+        for (let ex = ex0; ex <= ex1; ex++) {
+          const e = ey * n + ex
+          if (!grid.mask[e]) continue
+          if (Math.hypot(grid.cx[e]! - px, grid.cy[e]! - py) <= CORRIDOR_RADIUS) passive.add(e)
+        }
+      }
+    }
+  }
+
+  for (const t of tiles) {
+    if (roles.get(t.answerId) === 'mass' && t.salience >= CORE_PROTECTION_SALIENCE) {
+      protectCoreMass(t.x, t.y, t.sigma)
+      bridgeToNearestAnchor(t.x, t.y)
+    }
+  }
 
   return {
     fixedDofs: Uint32Array.from([...fixed].sort((a, b) => a - b)),

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { useStore } from '../state/store'
 import { getSolverSession } from '../solver/SolverSession'
 import type { FrameMetrics } from '../solver/protocol'
-import type { GridSize } from '../domain/types'
 import { placeAnswers } from '../layout/polar'
 import { createGrid, createFields, buildFields } from '../layout/fields'
 import { rankConflicts, rankBonds } from '../layout/interference'
@@ -27,8 +26,6 @@ export default function RunControls(): JSX.Element {
   const setRunning = useStore((s) => s.setRunning)
   const solver = useStore((s) => s.solver)
   const setSolver = useStore((s) => s.setSolver)
-  const layout = useStore((s) => s.layout)
-  const setGridSize = useStore((s) => s.setGridSize)
   const answers = useStore((s) => s.answers)
 
   const [open, setOpen] = useState(false)
@@ -122,50 +119,6 @@ export default function RunControls(): JSX.Element {
       {open && (
         <div style={{ display: 'grid', gap: 10, marginTop: 6, fontSize: 10 }}>
           <Row
-            label="Mode"
-            desc={
-              solver.mode === 'beso'
-                ? "BESO keeps material mostly solid or empty throughout and removes the "
-                  + "globally least-useful elements each step. It never thins an inter-tile "
-                  + "bridge to nothing, so every answer keeps a path to an anchor and tiles "
-                  + "chip and stretch into webbing rather than freezing mid-run."
-                : "SIMP shades gradually toward solid or void, which can settle on a softer, "
-                  + "more organic silhouette. It cannot rebuild a bridge it has already eaten, "
-                  + "so it is floored at the seed's own tile coverage to keep every load "
-                  + "connected -- at the cost of forming less webbing than BESO does."
-            }
-          >
-            <Seg
-              options={['simp', 'beso'] as const}
-              value={solver.mode}
-              onChange={(mode) => setSolver({ mode })}
-            />
-          </Row>
-          <Row
-            label="Resolution"
-            desc="Elements across the disc. Higher resolves thinner struts and more distinct chips per tile, but each iteration takes longer, and a tile narrower than the sensitivity filter gets erased before the optimizer can use it -- raise this if a large profile's tiles still look mushy after a run."
-          >
-            <Seg
-              options={[64, 96, 128] as const}
-              value={layout.gridSize}
-              onChange={(n) => setGridSize(n as GridSize)}
-            />
-          </Row>
-          <Row
-            label={`Iterations ${solver.iterations}`}
-            desc="How many optimization passes to run before stopping. Compliance and volume usually settle within a few dozen steps; more mostly refines the solid/void boundary rather than changing the overall shape. Raise it if the structure still looks unsettled when a run ends."
-          >
-            <input
-              type="range"
-              min={20}
-              max={300}
-              step={10}
-              value={solver.iterations}
-              onChange={(e) => setSolver({ iterations: Number(e.target.value) })}
-              style={{ width: '100%' }}
-            />
-          </Row>
-          <Row
             label={
               solver.volumeFraction === 'derived'
                 ? `Volume derived${progress ? ` (${progress.volume.toFixed(2)})` : ''}`
@@ -191,22 +144,8 @@ export default function RunControls(): JSX.Element {
             </div>
           </Row>
           <Row
-            label={`Penalty p ${solver.penalty.toFixed(1)}`}
-            desc="SIMP only. Pushes each element toward pure solid or pure void, away from an ambiguous gray composite -- higher forces a cleaner result but converges more slowly and can lock in early, arbitrary choices. Has no effect on BESO, which is binary by construction."
-          >
-            <input
-              type="range"
-              min={1}
-              max={5}
-              step={0.1}
-              value={solver.penalty}
-              onChange={(e) => setSolver({ penalty: Number(e.target.value) })}
-              style={{ width: '100%' }}
-            />
-          </Row>
-          <Row
             label={`Filter r ${solver.filterRadius.toFixed(1)}`}
-            desc="Minimum feature width the optimizer may build, in elements -- this is what stops the checkerboard artifact plane-stress topology optimization produces without it. Must stay at or below half the width of the smallest tile in the profile, or the filter can erase a tile's seed before the solver ever acts on it; raise Resolution rather than lowering this if tiles are being erased."
+            desc="Minimum feature width the optimizer may build, in elements -- this is what stops the checkerboard artifact plane-stress topology optimization produces without it. Must stay at or below half the width of the smallest tile in the profile, or the filter can erase a tile's seed before the solver ever acts on it."
           >
             <input
               type="range"
@@ -443,39 +382,6 @@ function Row({
         </span>
       )}
     </label>
-  )
-}
-
-function Seg<T extends string | number>({
-  options,
-  value,
-  onChange,
-}: {
-  options: readonly T[]
-  value: T
-  onChange: (v: T) => void
-}): JSX.Element {
-  return (
-    <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 4 }}>
-      {options.map((o) => (
-        <button
-          key={String(o)}
-          onClick={() => onChange(o)}
-          style={{
-            flex: 1,
-            padding: '3px 0',
-            border: 'none',
-            background: value === o ? 'var(--bg)' : 'transparent',
-            color: value === o ? 'var(--text)' : 'var(--text-dim)',
-            cursor: 'pointer',
-            font: 'inherit',
-            fontSize: 10,
-          }}
-        >
-          {String(o).toUpperCase()}
-        </button>
-      ))}
-    </div>
   )
 }
 

@@ -56,7 +56,7 @@ export const DEFAULT_SOLVER: SolverSettings = Object.freeze({
   // erases the seed structure before the optimizer can act on it and every profile
   // produces the same art.
   filterRadius: 2.2,
-  iterations: 120,
+  iterations: 100,
   moveLimit: 0.2,
   erosionRate: 0.02,
   seed: 1,
@@ -365,6 +365,11 @@ export const useStore = create<State>((set, get) => ({
           optionId,
           addedAt: base + k,
         })),
+        // The sample is a canonical demo, not user data -- reset solver/layout to the
+        // shipped defaults rather than leaving whatever a prior session's tinkering
+        // left behind.
+        layout: DEFAULT_LAYOUT,
+        solver: DEFAULT_SOLVER,
         dirty: true,
         hoveredAnswerId: null,
         mode: 'studio' as AppMode,
@@ -442,8 +447,14 @@ export const useStore = create<State>((set, get) => ({
       answers: p.answers,
       anchorAnswers: p.anchorAnswers,
       customPairs: p.pairs.filter((q) => q.source === 'custom'),
-      layout: p.layout,
-      solver: p.solver,
+      // Mode, resolution and iteration count are no longer user choices -- the app
+      // only ever runs BESO at 96 elements for 100 iterations, so a profile saved
+      // under an older build (or with a stale draft) is normalized on load rather
+      // than silently reviving a control that no longer exists in the UI. Volume
+      // stays whatever the profile chose: it is still a live, per-profile setting,
+      // and "reopening reproduces the same artwork" should keep meaning that for it.
+      layout: { ...p.layout, gridSize: 96 },
+      solver: { ...p.solver, mode: 'beso', iterations: 100 },
       render: p.render,
       dirty: false,
       hoveredAnswerId: null,

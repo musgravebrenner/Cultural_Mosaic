@@ -214,11 +214,18 @@ export function assignTerritory(
   const budget = reachBudget(opts.pitch)
   const frontier = new Frontier()
 
-  // Seed every owned cell at cost 0, in cell-index order for determinism.
+  // Seed every owned cell that is actually SOLID at cost 0, in cell-index order for
+  // determinism. A tile with no solid material of its own must not get a free
+  // zero-cost foothold here: that would let it walk outward (via the same
+  // `tryRelax` below) and claim a NEIGHBOUR's actually-solid, actually-connected
+  // cell purely because nothing else happened to be cheaper -- painting real,
+  // load-bearing structure with a fully-eroded tile's colour. A tile's own void
+  // cells still render correctly regardless (see the unconditional `hue.set`
+  // above): they are simply never a source other cells can be claimed FROM.
   for (let d = 0; d < designList.length; d++) {
     const i = designList[d]!
     const t = provenance[i]!
-    if (t < 0) continue
+    if (t < 0 || density[i]! <= opts.solidLo) continue
     owner[i] = t
     cost[i] = 0
     frontier.push(0, t, i)

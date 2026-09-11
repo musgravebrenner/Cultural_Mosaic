@@ -1,7 +1,8 @@
+import type { CategoryId } from '../domain/taxonomy'
 import type { PlacedTile, RenderConfig } from '../domain/types'
 import { FieldRenderer } from './FieldRenderer'
 import type { FieldFrame } from './FieldRenderer'
-import { OverlayRenderer } from './OverlayRenderer'
+import { NO_LABEL_OFFSETS, OverlayRenderer } from './OverlayRenderer'
 import { THEMES } from './tone'
 
 /**
@@ -27,6 +28,8 @@ export interface ExportOptions {
   readonly tiles: readonly PlacedTile[]
   readonly synthetics: readonly { x: number; y: number; thetaDeg: number; sigma: number }[]
   readonly rimRadius: number
+  /** Whatever a viewer dragged the category labels to; defaults to their stock position. */
+  readonly labelOffsets?: Readonly<Record<CategoryId, { readonly x: number; readonly y: number }>>
 }
 
 export async function exportPng(
@@ -65,6 +68,7 @@ export async function exportPng(
           rimRadius: opts.rimRadius,
           hovered: null,
           phase: 0,
+          labelOffsets: opts.labelOffsets ?? NO_LABEL_OFFSETS,
         },
         cfg,
       )
