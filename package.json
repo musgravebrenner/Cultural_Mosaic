@@ -1,6 +1,6 @@
 {
   "name": "cultural-mosaic",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Generative artwork from a cultural identity profile via SIMP/BESO topology optimization",
   "main": "./out/main/index.js",
   "private": true,
